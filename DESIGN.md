@@ -1,0 +1,104 @@
+# Design & Style Guide
+
+Conventions established while building the Suppliers app. **Follow these for all new
+screens and features** so the app stays consistent. When a new pattern is needed,
+add it here.
+
+## Toolkit & theming
+- **Tkinter with `ttk` (themed) widgets** for everything user-facing — `ttk.Frame`,
+  `ttk.Label`, `ttk.Entry`, `ttk.Button`, `ttk.Treeview`, `ttk.Combobox`.
+  Use classic `tk` only where `ttk` has no equivalent (e.g. `tk.Menu`, `tk.StringVar`).
+- **Font:** `("Segoe UI", ...)`. Page titles are `("Segoe UI", 20, "bold")`.
+- No custom colors yet — we rely on the default ttk theme. If we introduce a palette
+  later, centralize it (don't hardcode colors per widget).
+
+## App structure
+- One window: a single `App(tk.Tk)` subclass.
+- **One content area** (`self.container`, a `ttk.Frame(padding=20)`). Each screen is a
+  `show_<name>()` method that calls `self._clear_container()` and rebuilds the view.
+  Don't open secondary windows for primary navigation.
+- Track the active screen in `self.current_view` (used to scope shortcuts).
+- **One central database** (`app.db`) holds every table. `database.py` owns the file
+  path and the shared `get_connection()`; `database.init_db()` creates all tables at
+  startup.
+- **One data-access module per entity** (`suppliers.py`, `products.py`). Each imports
+  `get_connection` from `database.py`, exposes a `create_table()`, and keeps **all of
+  that entity's SQL**. The UI calls functions like `db.get_all_suppliers()` and never
+  writes SQL inline. The data layer raises domain errors (e.g. `DuplicateNameError`)
+  instead of leaking `sqlite3` errors.
+- **Bulk imports** (e.g. a CSV catalogue) live in the entity module as an
+  `import_from_csv(path, replace=True)` function — replace-on-reload so re-running is
+  idempotent. Map source columns explicitly (skip junk/constant columns).
+
+## Navigation & menu bar
+- Flat top-level menu commands (no nested cascades unless a group grows large).
+- **Show the keyboard shortcut in the label**, in brackets: `Home [F1]`, `Suppliers [F2]`.
+  (Top-level menubar items don't render `accelerator=`, so put it in the text.)
+
+## Page header pattern
+Every list/detail screen starts with a header row: **title on the left, primary action
+button on the right**, in a `ttk.Frame(fill="x")`.
+
+```python
+header = ttk.Frame(self.container)
+header.pack(fill="x", pady=(0, 10))
+ttk.Label(header, text="Suppliers", font=("Segoe UI", 20, "bold")).pack(side="left")
+ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pack(side="right")
+```
+- Primary "create" buttons read **`+ New <Thing>`**.
+
+## Forms (create / edit share one view)
+- One method handles both create and edit (`show_supplier_form(supplier=None)`); the
+  title switches between `Create <Thing>` / `Edit <Thing>` and fields pre-fill when editing.
+- Layout: `ttk.Label` + `ttk.Entry` pairs on a grid — label in column 0
+  (`sticky="w"`, `padx=(0, 10)`), entry in column 1, `pady=5`.
+- **Save** button below the form, `anchor="w"`, `pady=(20, 0)`.
+- Validation & feedback via `messagebox`: `showwarning` for missing required input,
+  `showerror` for conflicts (e.g. duplicate name), `showinfo` on success. After a
+  successful save, return to the list view.
+
+## Tables (lists)
+- `ttk.Treeview(show="headings")`. **Set each row's `iid` to the record's DB id** so
+  selections map straight back to the database.
+- Below the table, a single **status `ttk.Label`** for empty / "no matches" messages
+  (don't use a popup for an empty list).
+- Destructive actions **confirm first** (`messagebox.askyesno`) before deleting.
+
+## Large datasets (tens of thousands of rows)
+- **Never load the whole table into the Treeview.** Search/filter in SQL and **cap the
+  results** (`LIMIT`, e.g. 200). Default the view to the first page.
+- The status label reports the cap honestly: *"Showing first 200 of 6,160 matches —
+  narrow your search to see more."* (Never silently truncate.)
+- Give the table a vertical `ttk.Scrollbar` (wrap tree + scrollbar in their own frame).
+- Records that aren't user-editable get a **read-only detail view** (a labelled grid +
+  a `Back to <List>` button) instead of the create/edit form.
+
+## Derived data
+- Computed fields (e.g. a Stock Code parsed/assembled from other columns) are produced
+  **once at import time** and stored in their own column, so lists can show and search
+  them without recomputing. Keep the parsing/formatting logic in the entity module.
+
+## Search / filter bar
+- A `ttk.Frame(fill="x")` on a grid above the table: `Search:` label, entry, `Filter:`
+  combobox, then **Search** and **Clear** buttons.
+- The **search entry expands to fill horizontal space**; keep trailing controls flush
+  right: `search_frame.columnconfigure(<entry_col>, weight=1)` and grid the entry
+  `sticky="ew"` (no fixed `width`).
+- **Long option lists** (e.g. a Brand picker with 100+ values) use the
+  `AutocompleteCombobox` widget (in main.py): editable, autocompletes and narrows its
+  dropdown as you type. An empty box means "no filter / all". Free-text search and the
+  dropdown filter **combine** (text AND brand) in one SQL query.
+
+## Keyboard behavior (first-class, not an afterthought)
+- **Enter activates the focused button** app-wide: `bind_class("TButton", "<Return>", ...)`.
+- Global navigation shortcuts via `bind_all` (e.g. `F1` Home, `F2` Suppliers,
+  `Ctrl+N` new — scoped to the relevant view through `self.current_view`).
+- **Search → results flow:** Enter in the search box runs the search and, if there are
+  matches, moves focus to the table and selects the first row (so arrow keys navigate).
+  **Enter on a table row opens that record** (same as double-click).
+- When an action can't proceed (e.g. nothing selected), tell the user via `messagebox`
+  rather than failing silently.
+
+## Naming & wording
+- Buttons: `+ New Supplier`, `Search`, `Clear`, `Edit`, `Delete`, `Save`.
+- Uniqueness checks are **case-insensitive** (e.g. supplier name).
