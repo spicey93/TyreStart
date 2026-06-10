@@ -387,11 +387,16 @@ class App(tk.Tk):
                 status_label.config(text=f"Showing {shown:,} product(s).")
 
         def refresh_tree():
-            rows, total = product_db.query_products(
-                text=search_term.get().strip(),
-                brand=brand_choice.get().strip(),
-                limit=RESULT_LIMIT,
-            )
+            text = search_term.get().strip()
+            brand = brand_choice.get().strip()
+            # Don't show anything until the user applies a filter.
+            if not text and not brand:
+                tree.delete(*tree.get_children())
+                status_label.config(
+                    text="Enter a search term or choose a brand to see products."
+                )
+                return
+            rows, total = product_db.query_products(text=text, brand=brand, limit=RESULT_LIMIT)
             populate(rows, total)
 
         def clear_search():
