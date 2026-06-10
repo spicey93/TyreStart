@@ -644,16 +644,21 @@ class App(tk.Tk):
         status_label = ttk.Label(self.container, text="")
         status_label.pack(anchor="w", pady=(8, 0))
 
-        def view_selected():
+        def activate_selected():
             selection = tree.selection()
             if not selection:
                 messagebox.showinfo("No selection", "Please select a product first.")
                 return
-            self.show_product_detail(int(selection[0]))
+            product_id = int(selection[0])
+            action = self.ask_product_action()
+            if action == "view":
+                self.show_product_detail(product_id)
+            elif action == "sale":
+                self.show_sale_form(prefill_product=product_db.get_product(product_id))
 
-        # Double-clicking or pressing Enter on a row opens that product.
-        tree.bind("<Double-1>", lambda e: view_selected())
-        tree.bind("<Return>", lambda e: view_selected())
+        # Double-clicking or pressing Enter on a row asks what to do with it.
+        tree.bind("<Double-1>", lambda e: activate_selected())
+        tree.bind("<Return>", lambda e: activate_selected())
 
         refresh_tree()
 
@@ -1312,6 +1317,37 @@ class App(tk.Tk):
             win.destroy()
 
         stock_entry.focus_set()
+
+    def ask_product_action(self):
+        """Ask whether to view the product or start a sale for it.
+        Returns "view", "sale", or None if cancelled."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Product")
+        dialog.transient(self)
+        dialog.grab_set()
+        result = {"value": None}
+
+        ttk.Label(
+            dialog, text="What would you like to do with this product?", padding=15
+        ).pack(anchor="w")
+        btns = ttk.Frame(dialog, padding=(15, 0, 15, 15))
+        btns.pack(fill="x")
+
+        def choose(value):
+            result["value"] = value
+            dialog.destroy()
+
+        view_btn = ttk.Button(btns, text="View Product", command=lambda: choose("view"))
+        view_btn.pack(side="left")
+        ttk.Button(btns, text="Create Sale", command=lambda: choose("sale")).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side="right")
+
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        view_btn.focus_set()
+        self.wait_window(dialog)
+        return result["value"]
 
     def ask_quantity_cost(self, parent, product_label, price_label="Unit Cost (net)"):
         """Modal dialog returning (quantity, net_unit_price, vat_rate) or None."""
@@ -1998,8 +2034,10 @@ class App(tk.Tk):
         tree.bind("<Return>", lambda e: open_selected())
         refresh()
 
-    def show_sale_form(self, sale=None):
-        """Create/edit a sale with product and service line items."""
+    def show_sale_form(self, sale=None, prefill_product=None):
+        """Create/edit a sale with product and service line items.
+        `prefill_product` (a product row) starts a new sale with that product
+        already added — used when creating a sale straight from the product list."""
         self.current_view = "sale_form"
         self._clear_container()
         editing = sale is not None
@@ -2138,7 +2176,14 @@ class App(tk.Tk):
             editor.select_range(0, "end")
             editor.focus_set()
 
+            committed = {"done": False}
+
             def commit(_=None):
+                # Bound to both <Return> and <FocusOut>; the warning dialog steals
+                # focus and would otherwise fire commit a second time.
+                if committed["done"]:
+                    return
+                committed["done"] = True
                 raw = editor.get().strip()
                 try:
                     if key == "quantity":
@@ -2152,7 +2197,17 @@ class App(tk.Tk):
                 except ValueError:
                     editor.destroy()
                     return
-                lines[index][key] = value
+                ln = lines[index]
+                # Warn (but still allow) when selling more than we hold in stock.
+                if key == "quantity" and ln["item_type"] == "product" and ln["product_id"]:
+                    stock = product_db.product_stock(ln["product_id"])
+                    if value > stock:
+                        messagebox.showwarning(
+                            "Insufficient stock",
+                            f"Only {stock} in stock for this product, "
+                            f"but {value} requested.",
+                        )
+                ln[key] = value
                 editor.destroy()
                 refresh_lines()
 
@@ -2216,6 +2271,14 @@ class App(tk.Tk):
                     "vat_rate": it["vat_rate"],
                 })
             refresh_lines()
+        elif prefill_product is not None:
+            # Started from the product list: add it straight away as a single line.
+            # Quantity/retail price are then editable inline in the items table.
+            label = f"{prefill_product['stock_code']} — {prefill_product['description']}"
+            receive_products([{
+                "product_id": prefill_product["id"], "label": label,
+                "quantity": 1, "cost_price": 0.0, "vat_rate": VAT_RATE_OPTIONS[0][1],
+            }])
 
     def open_service_picker(self, on_add):
         """Modal dialog to add one service line. Calls on_add(line_dict)."""
