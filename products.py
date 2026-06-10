@@ -296,10 +296,11 @@ def query_products(text="", brand="", in_stock="all", limit=200):
 SIZE_SPEED_RE = re.compile(r"^(\d{7})([A-Za-z]+)$")
 
 
-def search_products_adv(stock_code="", brand="", model="", limit=200):
+def search_products_adv(stock_code="", brand="", model="", in_stock="", limit=200):
     """Search by stock code and/or exact brand/model, for the Product Allocation
     window. The stock-code box also accepts a size+speed shorthand such as
-    "2055516V" (size 205/55R16 + speed rating V). Returns (rows, total_matches)."""
+    "2055516V" (size 205/55R16 + speed rating V). `in_stock` ('yes'/'no', else no
+    filter) restricts by current stock. Returns (rows, total_matches)."""
     clauses, params = [], []
     speed = ""
     code = stock_code.strip()
@@ -317,6 +318,10 @@ def search_products_adv(stock_code="", brand="", model="", limit=200):
     if model:
         clauses.append("model = ? COLLATE NOCASE")
         params.append(model)
+    if in_stock == "yes":
+        clauses.append(f"{STOCK_EXPR} > 0")
+    elif in_stock == "no":
+        clauses.append(f"{STOCK_EXPR} = 0")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
     with get_connection() as conn:

@@ -95,8 +95,10 @@ def make_sortable(tree):
 
     for col in tree["columns"]:
         # Preserve the heading text already set; just attach the sort command.
-        tree.heading(col, text=tree.heading(col, "text"),
+        # Centre both the heading and the cell text (applied to every table).
+        tree.heading(col, text=tree.heading(col, "text"), anchor="center",
                      command=lambda c=col: sort_by(c))
+        tree.column(col, anchor="center")
 
 
 class App(tk.Tk):
@@ -188,7 +190,9 @@ class App(tk.Tk):
             listbox.pack(padx=1, pady=1)
             listbox.bind("<Return>", self._section_choose)
             listbox.bind("<Double-Button-1>", self._section_choose)
-            listbox.bind("<Escape>", lambda e: self._close_section())
+            # Return "break" so Esc that closes the dropdown doesn't also fall
+            # through to a form's Esc=cancel shortcut behind it.
+            listbox.bind("<Escape>", lambda e: (self._close_section(), "break")[1])
             listbox.bind("<FocusOut>", self._on_section_focusout)
             self._section_popup = frame
             self._section_listbox = listbox
@@ -229,8 +233,73 @@ class App(tk.Tk):
         if frame is not None and frame.winfo_exists() and frame.winfo_ismapped():
             frame.place_forget()
 
+    # Keys that move around a form without editing it — they don't mark it dirty.
+    _NAV_KEYS = {
+        "Escape", "Tab", "ISO_Left_Tab", "Up", "Down", "Left", "Right", "Prior",
+        "Next", "Home", "End", "Return", "Shift_L", "Shift_R", "Control_L",
+        "Control_R", "Alt_L", "Alt_R", "Win_L", "Win_R", "Caps_Lock",
+    }
+
+    def _bind_form_shortcuts(self, save=None, cancel=None, delete=None):
+        """Keyboard shortcuts for a form view: Ctrl+S save, Ctrl+D delete, Esc
+        cancel. Pass only the actions the form supports (e.g. omit delete when
+        creating). Also starts unsaved-changes tracking so cancel can prompt.
+        Cleared automatically on the next view switch."""
+        self._unbind_form_shortcuts()
+        self._form_shortcuts = []
+        self._form_dirty = False
+
+        def bind(sequence, action):
+            def handler(_event):
+                action()
+                return "break"  # don't let the keystroke fall through to widgets
+            self._form_shortcuts.append((sequence, self.bind(sequence, handler)))
+
+        # Track edits so cancel can ask before discarding. Typing or changing a
+        # dropdown marks the form dirty; line-item changes call mark_form_dirty().
+        def on_key(event):
+            if event.keysym not in self._NAV_KEYS and not event.keysym.startswith("F"):
+                self._form_dirty = True
+        self._form_shortcuts.append(("<Key>", self.bind("<Key>", on_key, add="+")))
+        self._form_shortcuts.append((
+            "<<ComboboxSelected>>",
+            self.bind("<<ComboboxSelected>>", lambda e: self.mark_form_dirty(), add="+"),
+        ))
+
+        if save:
+            bind("<Control-s>", save)
+        if delete:
+            bind("<Control-d>", delete)
+        if cancel:
+            bind("<Escape>", cancel)
+
+    def mark_form_dirty(self):
+        """Flag the current form as having unsaved changes (e.g. a line added)."""
+        self._form_dirty = True
+
+    def _confirm_discard(self):
+        """True if it's safe to leave the form: no edits, or the user confirms."""
+        if getattr(self, "_form_dirty", False):
+            return messagebox.askyesno(
+                "Unsaved changes", "You have unsaved changes. Discard them?"
+            )
+        return True
+
+    def _discard_guard(self, navigate):
+        """Wrap a navigation action so it first confirms discarding unsaved edits."""
+        def go():
+            if self._confirm_discard():
+                navigate()
+        return go
+
+    def _unbind_form_shortcuts(self):
+        for sequence, funcid in getattr(self, "_form_shortcuts", []):
+            self.unbind(sequence, funcid)
+        self._form_shortcuts = []
+
     def _clear_container(self):
         self._close_section()  # dismiss any open section dropdown on view switch
+        self._unbind_form_shortcuts()  # drop the previous form's shortcuts
         for widget in self.container.winfo_children():
             widget.destroy()
         # Once the new view has been built (next idle), focus its first interactive
@@ -459,15 +528,23 @@ class App(tk.Tk):
                 db.delete_supplier(supplier["id"])
                 self.show_all_suppliers()
 
+        cancel = self._discard_guard(self.show_all_suppliers)
         button_frame = ttk.Frame(self.container)
         button_frame.pack(anchor="w", pady=(20, 0))
-        ttk.Button(button_frame, text="Save", command=save).pack(side="left")
+        ttk.Button(button_frame, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(
+            button_frame, text="Cancel (Esc)", command=cancel
+        ).pack(side="left", padx=(8, 0))
         if editing:
             ttk.Button(
                 button_frame,
-                text="Delete",
+                text="Delete (Ctrl+D)",
                 command=delete_current,
             ).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(
+            save=save, cancel=cancel,
+            delete=delete_current if editing else None,
+        )
 
         # Account section: balance + payment actions (only for an existing supplier).
         if editing:
@@ -786,10 +863,12 @@ class App(tk.Tk):
             messagebox.showinfo("Saved", "Product created.")
             self.show_products()
 
+        cancel = self._discard_guard(self.show_products)
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel", command=self.show_products).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(save=save, cancel=cancel)
 
     # --------------------------------------------------------------- Pricing Rules
 
@@ -959,10 +1038,12 @@ class App(tk.Tk):
             messagebox.showinfo("Saved", f"Pricing rule '{name}' saved.")
             self.show_pricing_rules()
 
+        cancel = self._discard_guard(self.show_pricing_rules)
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel", command=self.show_pricing_rules).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(save=save, cancel=cancel)
 
     # ------------------------------------------------------------------ Purchases
 
@@ -1123,6 +1204,7 @@ class App(tk.Tk):
             """Called by the Product Allocation window when its basket is submitted."""
             lines.extend(items)
             refresh_lines()
+            self.mark_form_dirty()
 
         lt_frame = ttk.Frame(self.container)
         lt_frame.pack(fill="both", expand=True, pady=(8, 0))
@@ -1157,6 +1239,7 @@ class App(tk.Tk):
                 return
             del lines[int(selection[0])]
             refresh_lines()
+            self.mark_form_dirty()
 
         def refresh_lines():
             lines_tree.delete(*lines_tree.get_children())
@@ -1260,12 +1343,17 @@ class App(tk.Tk):
                     return
                 self.show_purchases()
 
+        cancel = self._discard_guard(self.show_purchases)
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(12, 0))
-        ttk.Button(btns, text="Save", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel", command=self.show_purchases).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
         if editing:
-            ttk.Button(btns, text="Delete", command=delete_current).pack(side="left", padx=(8, 0))
+            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(
+            save=save, cancel=cancel,
+            delete=delete_current if editing else None,
+        )
 
         # Prefill when editing (after the line widgets exist).
         if editing:
@@ -1286,19 +1374,23 @@ class App(tk.Tk):
     # ------------------------------------------------------- Product Allocation
 
     def open_product_allocation(self, on_submit, price_label="Unit Cost (net)",
-                                price_fn=None):
-        """Modal window to search products, build a basket, and submit it.
+                                price_fn=None, stock_filter=False, quick_add=False):
+        """Modal window to search products and submit them to a sale/purchase.
         `on_submit` receives a list of line dicts
         (product_id, label, quantity, cost_price, vat_rate). `price_label` sets
         the wording of the per-line price field (cost for purchases, price for
         sales). `price_fn`, if given, is called with a product row to pre-fill the
-        price field (used on sales to suggest the pricing-rule retail price)."""
+        price field (used on sales to suggest the pricing-rule retail price).
+        `stock_filter` swaps the Model picker for an In Stock filter (default Yes) —
+        used on sales; purchases keep the Model picker. `quick_add` (sales) skips
+        the basket and quantity dialog: selecting a product adds qty 1 at its rule
+        price and closes the window immediately."""
         win = tk.Toplevel(self)
-        win.title("Product Allocation")
-        win.geometry("920x620")
+        win.title("Add Product" if quick_add else "Product Allocation")
+        win.geometry("920x460" if quick_add else "920x620")
         win.transient(self)
 
-        basket = []  # dicts: product_id, label, quantity, cost_price
+        basket = []  # dicts: product_id, label, quantity, cost_price (unused if quick_add)
         result_map = {}  # iid -> product Row
 
         # --- Search controls ---
@@ -1314,24 +1406,38 @@ class App(tk.Tk):
         # Enter searches; if the box is empty and the basket has items, it submits.
         stock_entry.bind("<Return>", lambda e: on_stock_return())
 
+        in_stock_var = tk.StringVar(value="Yes")
+
         ttk.Label(search, text="Brand:").grid(row=0, column=2, sticky="w")
         brand_combo = AutocompleteCombobox(search, textvariable=brand_var, width=18)
         brand_combo.set_completion_list(product_db.get_brands())
         brand_combo.grid(row=0, column=3, padx=(6, 12))
         brand_combo.bind("<Return>", lambda e: do_search())
-        # Narrow the model list to the chosen brand (and size). Bind both the
-        # dropdown selection and typing (add="+" keeps the autocomplete handler).
-        brand_combo.bind("<<ComboboxSelected>>", lambda e: refresh_models())
-        brand_combo.bind("<KeyRelease>", lambda e: refresh_models(), add="+")
 
-        ttk.Label(search, text="Model:").grid(row=0, column=4, sticky="w")
-        model_combo = AutocompleteCombobox(search, textvariable=model_var, width=18)
-        # Disabled until a brand is chosen; refresh_models() enables it.
-        model_combo.configure(state="disabled")
-        model_combo.grid(row=0, column=5, padx=(6, 12))
-        model_combo.bind("<Return>", lambda e: do_search())
-        # Re-narrow the model list as the size (stock-code box) changes.
-        stock_entry.bind("<KeyRelease>", lambda e: refresh_models())
+        if stock_filter:
+            # Sales: filter by stock instead of model (default to in-stock only).
+            ttk.Label(search, text="In Stock:").grid(row=0, column=4, sticky="w")
+            in_stock_combo = ttk.Combobox(
+                search, state="readonly", width=6, textvariable=in_stock_var,
+                values=["Yes", "No", "All"],
+            )
+            in_stock_combo.grid(row=0, column=5, padx=(6, 12))
+            in_stock_combo.current(0)
+            in_stock_combo.bind("<<ComboboxSelected>>", lambda e: do_search())
+            model_combo = None
+        else:
+            # Purchases: keep the brand-narrowed model picker. Bind both the
+            # dropdown selection and typing (add="+" keeps the autocomplete handler).
+            brand_combo.bind("<<ComboboxSelected>>", lambda e: refresh_models())
+            brand_combo.bind("<KeyRelease>", lambda e: refresh_models(), add="+")
+            ttk.Label(search, text="Model:").grid(row=0, column=4, sticky="w")
+            model_combo = AutocompleteCombobox(search, textvariable=model_var, width=18)
+            # Disabled until a brand is chosen; refresh_models() enables it.
+            model_combo.configure(state="disabled")
+            model_combo.grid(row=0, column=5, padx=(6, 12))
+            model_combo.bind("<Return>", lambda e: do_search())
+            # Re-narrow the model list as the size (stock-code box) changes.
+            stock_entry.bind("<KeyRelease>", lambda e: refresh_models())
 
         ttk.Button(search, text="Search", command=lambda: do_search()).grid(row=0, column=6, padx=(0, 6))
         ttk.Button(search, text="Clear", command=lambda: clear()).grid(row=0, column=7)
@@ -1352,41 +1458,52 @@ class App(tk.Tk):
         rsb.pack(side="right", fill="y")
         results.pack(side="left", fill="both", expand=True)
 
-        res_status = ttk.Label(win, text="Search by stock code, brand or model.", padding=(10, 4))
+        default_status = (
+            "Search and select a product to add it to the sale."
+            if quick_add else "Search by stock code, brand or model."
+        )
+        res_status = ttk.Label(win, text=default_status, padding=(10, 4))
         res_status.pack(anchor="w")
 
-        # --- Basket ---
-        ttk.Label(
-            win, text="Basket", font=("Segoe UI", 12, "bold")
-        ).pack(anchor="w", padx=10)
-        bframe = ttk.Frame(win, padding=(10, 0))
-        bframe.pack(fill="both", expand=True)
-        basket_tree = ttk.Treeview(
-            bframe, columns=("product", "qty", "cost", "vat", "total"),
-            show="headings", height=5,
-        )
-        for col, heading, width, anchor in [
-            ("product", "Product", 300, "w"), ("qty", "Qty", 50, "e"),
-            ("cost", "Unit Cost", 90, "e"), ("vat", "VAT", 60, "e"),
-            ("total", "Line Total", 100, "e"),
-        ]:
-            basket_tree.heading(col, text=heading)
-            basket_tree.column(col, width=width, anchor=anchor)
-        make_sortable(basket_tree)
-        bsb = ttk.Scrollbar(bframe, orient="vertical", command=basket_tree.yview)
-        basket_tree.configure(yscrollcommand=bsb.set)
-        bsb.pack(side="right", fill="y")
-        basket_tree.pack(side="left", fill="both", expand=True)
+        basket_tree = total_lbl = None
+        if quick_add:
+            # No basket: a single Close button; selecting a product adds & closes.
+            foot = ttk.Frame(win, padding=10)
+            foot.pack(fill="x")
+            ttk.Button(foot, text="Close", command=win.destroy).pack(side="right")
+        else:
+            # --- Basket ---
+            ttk.Label(
+                win, text="Basket", font=("Segoe UI", 12, "bold")
+            ).pack(anchor="w", padx=10)
+            bframe = ttk.Frame(win, padding=(10, 0))
+            bframe.pack(fill="both", expand=True)
+            basket_tree = ttk.Treeview(
+                bframe, columns=("product", "qty", "cost", "vat", "total"),
+                show="headings", height=5,
+            )
+            for col, heading, width, anchor in [
+                ("product", "Product", 300, "w"), ("qty", "Qty", 50, "e"),
+                ("cost", "Unit Cost", 90, "e"), ("vat", "VAT", 60, "e"),
+                ("total", "Line Total", 100, "e"),
+            ]:
+                basket_tree.heading(col, text=heading)
+                basket_tree.column(col, width=width, anchor=anchor)
+            make_sortable(basket_tree)
+            bsb = ttk.Scrollbar(bframe, orient="vertical", command=basket_tree.yview)
+            basket_tree.configure(yscrollcommand=bsb.set)
+            bsb.pack(side="right", fill="y")
+            basket_tree.pack(side="left", fill="both", expand=True)
 
-        foot = ttk.Frame(win, padding=10)
-        foot.pack(fill="x")
-        ttk.Button(foot, text="Remove", command=lambda: remove_basket()).pack(side="left")
-        total_lbl = ttk.Label(
-            foot, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
-        )
-        total_lbl.pack(side="left", padx=(12, 0))
-        ttk.Button(foot, text="Submit to Purchase", command=lambda: submit()).pack(side="right")
-        ttk.Button(foot, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 8))
+            foot = ttk.Frame(win, padding=10)
+            foot.pack(fill="x")
+            ttk.Button(foot, text="Remove", command=lambda: remove_basket()).pack(side="left")
+            total_lbl = ttk.Label(
+                foot, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
+            )
+            total_lbl.pack(side="left", padx=(12, 0))
+            ttk.Button(foot, text="Submit to Purchase", command=lambda: submit()).pack(side="right")
+            ttk.Button(foot, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 8))
 
         def size_prefix():
             # Leading digits of the stock-code box, e.g. "2055516V" -> "2055516".
@@ -1399,6 +1516,10 @@ class App(tk.Tk):
             return digits if len(digits) >= 3 else ""
 
         def refresh_models():
+            # Only relevant in model mode (purchases); a no-op when the In Stock
+            # filter has replaced the model picker.
+            if model_combo is None:
+                return
             # Model picker stays disabled until a brand is chosen; once it is, the
             # list is narrowed to that brand (and the size, if one's been typed).
             brand = brand_var.get().strip()
@@ -1428,7 +1549,8 @@ class App(tk.Tk):
             rows, total = product_db.search_products_adv(
                 stock_code=stock_var.get().strip(),
                 brand=brand_var.get().strip(),
-                model=model_var.get().strip(),
+                model="" if stock_filter else model_var.get().strip(),
+                in_stock=in_stock_var.get().lower() if stock_filter else "",
                 limit=200,
             )
             for r in rows:
@@ -1445,7 +1567,8 @@ class App(tk.Tk):
                 results.focus(first)
                 results.see(first)
                 more = f" of {total:,}" if total > len(children) else ""
-                res_status.config(text=f"Showing {len(children):,}{more} — Enter to add a row.")
+                hint = "Enter to add to sale" if quick_add else "Enter to add a row"
+                res_status.config(text=f"Showing {len(children):,}{more} — {hint}.")
             else:
                 res_status.config(text="No products found.")
 
@@ -1453,10 +1576,12 @@ class App(tk.Tk):
             stock_var.set("")
             brand_var.set("")
             model_var.set("")
+            if stock_filter:
+                in_stock_var.set("Yes")
             results.delete(*results.get_children())
             result_map.clear()
             refresh_models()
-            res_status.config(text="Search by stock code, brand or model.")
+            res_status.config(text=default_status)
             stock_entry.focus_set()
 
         def add_selected():
@@ -1467,6 +1592,16 @@ class App(tk.Tk):
             if not product:
                 return
             label = f"{product['stock_code']} — {product['description']}"
+            if quick_add:
+                # Add qty 1 at the rule price and return straight to the sale.
+                on_submit([{
+                    "product_id": product["id"], "label": label,
+                    "description": product["description"] or label,
+                    "quantity": 1, "cost_price": price_fn(product) if price_fn else 0.0,
+                    "vat_rate": VAT_RATE_OPTIONS[0][1],
+                }])
+                win.destroy()
+                return
             default_cost = price_fn(product) if price_fn else None
             qc = self.ask_quantity_cost(win, label, price_label, default_cost=default_cost)
             if qc is None:
@@ -1474,6 +1609,7 @@ class App(tk.Tk):
             quantity, cost, vat_rate = qc
             basket.append({
                 "product_id": product["id"], "label": label,
+                "description": product["description"] or label,
                 "quantity": quantity, "cost_price": cost, "vat_rate": vat_rate,
             })
             refresh_basket()
@@ -1803,12 +1939,12 @@ class App(tk.Tk):
             messagebox.showinfo("Saved", "Payment recorded.")
             self.show_payments(supplier_id)
 
+        cancel = self._discard_guard(lambda: self.show_payments(supplier_id))
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save Payment", command=save).pack(side="left")
-        ttk.Button(
-            btns, text="Cancel", command=lambda: self.show_payments(supplier_id)
-        ).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save Payment (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(save=save, cancel=cancel)
 
     # ------------------------------------------------------------------- Services
 
@@ -1964,12 +2100,17 @@ class App(tk.Tk):
                 service_db.delete_service(service["id"])
                 self.show_services()
 
+        cancel = self._discard_guard(self.show_services)
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(20, 0))
-        ttk.Button(btns, text="Save", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel", command=self.show_services).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
         if editing:
-            ttk.Button(btns, text="Delete", command=delete_current).pack(side="left", padx=(8, 0))
+            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(
+            save=save, cancel=cancel,
+            delete=delete_current if editing else None,
+        )
 
     # ------------------------------------------------------------------ Customers
 
@@ -2080,6 +2221,10 @@ class App(tk.Tk):
             entry.grid(row=row, column=1, pady=5)
             if editing:
                 entry.insert(0, customer[key] or "")
+            elif key == "account_number":
+                # Autogenerated on save for new customers.
+                entry.insert(0, "(auto-generated)")
+                entry.configure(state="readonly")
             entries[key] = entry
 
         def save():
@@ -2087,6 +2232,8 @@ class App(tk.Tk):
             if not data["name"]:
                 messagebox.showwarning("Missing name", "Please enter a customer name.")
                 return
+            if not editing:
+                data["account_number"] = ""  # let the data layer generate it
             try:
                 if editing:
                     customer_db.update_customer(
@@ -2115,10 +2262,15 @@ class App(tk.Tk):
 
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(20, 0))
-        ttk.Button(btns, text="Save", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel", command=self.show_customers).pack(side="left", padx=(8, 0))
+        cancel = self._discard_guard(self.show_customers)
+        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
         if editing:
-            ttk.Button(btns, text="Delete", command=delete_current).pack(side="left", padx=(8, 0))
+            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(
+            save=save, cancel=cancel,
+            delete=delete_current if editing else None,
+        )
 
         # Account section: balance + receipt actions (only for an existing customer).
         if editing:
@@ -2251,34 +2403,69 @@ class App(tk.Tk):
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
-        head = ttk.Frame(self.container)
-        head.pack(anchor="w")
-        customer_by_name = {c["name"]: c["id"] for c in customer_db.get_all_customers()}
-
-        customer_var = tk.StringVar()
         status_var = tk.StringVar(value="Quote")
         reference_var = tk.StringVar(value="(auto-generated)")
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
 
-        ttk.Label(head, text="Customer:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 10))
-        customer_combo = AutocompleteCombobox(head, textvariable=customer_var, width=37)
-        customer_combo.set_completion_list(list(customer_by_name.keys()))
-        customer_combo.grid(row=0, column=1, sticky="w", pady=4)
+        # Two-column details panel: Customer/Status on the left, Reference/Date right.
+        head = ttk.LabelFrame(self.container, text="Sale Details", padding=12)
+        head.pack(anchor="w", fill="x")
 
-        ttk.Label(head, text="Status:").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 10))
+        # Customer is chosen via + (create new) / 🔍 (search) buttons; once assigned
+        # an ✕ button unassigns it and the +/search buttons return.
+        customer_state = {"id": None, "name": ""}
+        ttk.Label(head, text="Customer:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
+        cust_frame = ttk.Frame(head)
+        cust_frame.grid(row=0, column=1, sticky="w", pady=6)
+
+        def set_customer(customer_id, name):
+            customer_state["id"], customer_state["name"] = customer_id, name
+            render_customer()
+
+        def clear_customer():
+            customer_state["id"], customer_state["name"] = None, ""
+            render_customer()
+
+        def render_customer():
+            for child in cust_frame.winfo_children():
+                child.destroy()
+            if customer_state["id"] is not None:
+                ttk.Label(
+                    cust_frame, text=customer_state["name"], font=("Segoe UI", 10, "bold")
+                ).pack(side="left")
+                ttk.Button(cust_frame, text="✕", width=3, command=clear_customer).pack(
+                    side="left", padx=(8, 0)
+                )
+            else:
+                ttk.Label(cust_frame, text="No customer selected", foreground="gray").pack(
+                    side="left"
+                )
+                ttk.Button(
+                    cust_frame, text="+", width=3,
+                    command=lambda: self.open_new_customer_dialog(set_customer),
+                ).pack(side="left", padx=(8, 0))
+                ttk.Button(
+                    cust_frame, text="🔍", width=3,
+                    command=lambda: self.open_customer_search_dialog(set_customer),
+                ).pack(side="left", padx=(4, 0))
+
+        render_customer()
+
+        ttk.Label(head, text="Status:").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
         ttk.Combobox(
-            head, state="readonly", width=15, textvariable=status_var,
+            head, state="readonly", width=18, textvariable=status_var,
             values=list(sale_db.STATUSES),
-        ).grid(row=1, column=1, sticky="w", pady=4)
+        ).grid(row=1, column=1, sticky="w", pady=6)
 
-        ttk.Label(head, text="Reference:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 10))
+        # Right column.
+        ttk.Label(head, text="Reference:").grid(row=0, column=2, sticky="w", pady=6, padx=(30, 10))
         # Autogenerated per status (Q…/O…/INV…); not user-editable.
-        ttk.Entry(head, textvariable=reference_var, width=40, state="readonly").grid(
-            row=2, column=1, sticky="w", pady=4
+        ttk.Entry(head, textvariable=reference_var, width=22, state="readonly").grid(
+            row=0, column=3, sticky="w", pady=6
         )
 
-        ttk.Label(head, text="Date:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 10))
-        ttk.Entry(head, textvariable=date_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(head, text="Date:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=date_var, width=22).grid(row=1, column=3, sticky="w", pady=6)
 
         # --- Line items (products + services) ---
         items_header = ttk.Frame(self.container)
@@ -2289,6 +2476,7 @@ class App(tk.Tk):
             command=lambda: self.open_product_allocation(
                 receive_products, "Unit Price (net)",
                 price_fn=lambda p: pricing_db.price_for_product(p["id"]),
+                stock_filter=True, quick_add=True,
             ),
         ).pack(side="left", padx=(12, 0))
         ttk.Button(
@@ -2302,15 +2490,18 @@ class App(tk.Tk):
             for it in basket:
                 lines.append({
                     "item_type": "product", "product_id": it["product_id"],
-                    "service_id": None, "description": it["label"],
+                    "service_id": None,
+                    "description": it.get("description") or it["label"],
                     "quantity": it["quantity"], "unit_price": it["cost_price"],
                     "vat_rate": it["vat_rate"],
                 })
             refresh_lines()
+            self.mark_form_dirty()
 
         def receive_service(line):
             lines.append(line)
             refresh_lines()
+            self.mark_form_dirty()
 
         lt_frame = ttk.Frame(self.container)
         lt_frame.pack(fill="both", expand=True, pady=(8, 0))
@@ -2345,6 +2536,7 @@ class App(tk.Tk):
                 return
             del lines[int(selection[0])]
             refresh_lines()
+            self.mark_form_dirty()
 
         def refresh_lines():
             lines_tree.delete(*lines_tree.get_children())
@@ -2427,15 +2619,9 @@ class App(tk.Tk):
         lines_tree.bind("<Double-1>", edit_cell)
 
         def save():
-            customer_name = customer_var.get().strip()
-            customer_id = customer_by_name.get(customer_name)
+            customer_id = customer_state["id"]
             if customer_id is None:
-                for name, cid in customer_by_name.items():
-                    if name.lower() == customer_name.lower():
-                        customer_id = cid
-                        break
-            if customer_id is None:
-                messagebox.showwarning("Customer", "Please choose a valid customer.")
+                messagebox.showwarning("Customer", "Please choose a customer.")
                 return
             if not lines:
                 messagebox.showwarning("No items", "Add at least one product or service.")
@@ -2459,15 +2645,20 @@ class App(tk.Tk):
                     return
                 self.show_sales()
 
+        cancel = self._discard_guard(self.show_sales)
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(12, 0))
-        ttk.Button(btns, text="Save", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel", command=self.show_sales).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
         if editing:
-            ttk.Button(btns, text="Delete", command=delete_current).pack(side="left", padx=(8, 0))
+            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(
+            save=save, cancel=cancel,
+            delete=delete_current if editing else None,
+        )
 
         if editing:
-            customer_var.set(sale["customer_name"])
+            set_customer(sale["customer_id"], sale["customer_name"])
             status_var.set(sale["status"])
             reference_var.set(sale["reference"] or "(auto-generated)")
             date_var.set(sale["date"] or "")
@@ -2487,83 +2678,230 @@ class App(tk.Tk):
             price = pricing_db.price_for_product(prefill_product["id"]) or 0.0
             receive_products([{
                 "product_id": prefill_product["id"], "label": label,
+                "description": prefill_product["description"] or label,
                 "quantity": 1, "cost_price": price, "vat_rate": VAT_RATE_OPTIONS[0][1],
             }])
 
-    def open_service_picker(self, on_add):
-        """Modal dialog to add one service line. Calls on_add(line_dict)."""
-        services = service_db.list_services()
-        if not services:
-            messagebox.showinfo("No services", "There are no services yet. Add some under Services.")
-            return
-        by_label = {f"{s['service_code'] or '—'} - {s['service_name']}": s for s in services}
-
+    def open_new_customer_dialog(self, on_created):
+        """Modal to create a customer; calls on_created(id, name) on success."""
         dialog = tk.Toplevel(self)
-        dialog.title("Add Service")
+        dialog.title("New Customer")
         dialog.transient(self)
         dialog.grab_set()
 
-        form = ttk.Frame(dialog, padding=12)
-        form.pack(fill="both", expand=True)
-        service_var = tk.StringVar()
-        qty_var = tk.StringVar(value="1")
-        price_var = tk.StringVar()
-        vat_var = tk.StringVar(value=VAT_RATE_OPTIONS[0][0])
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        entries = {}
+        fields = [
+            ("name", "Name"), ("contact", "Contact"), ("email", "Email"),
+            ("phone", "Phone"),
+        ]
+        for row, (key, label) in enumerate(fields):
+            ttk.Label(frame, text=label + ":").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+            entry = ttk.Entry(frame, width=34)
+            entry.grid(row=row, column=1, pady=4)
+            entries[key] = entry
+        ttk.Label(
+            frame, text="Account # is generated automatically.", foreground="gray"
+        ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        ttk.Label(form, text="Service:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
-        service_combo = AutocompleteCombobox(form, textvariable=service_var, width=34)
-        service_combo.set_completion_list(list(by_label.keys()))
-        service_combo.grid(row=0, column=1, pady=4)
-
-        ttk.Label(form, text="Quantity:").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
-        ttk.Entry(form, textvariable=qty_var, width=14).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(form, text="Unit Price (net):").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
-        ttk.Entry(form, textvariable=price_var, width=14).grid(row=2, column=1, sticky="w", pady=4)
-        ttk.Label(form, text="VAT:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
-        vat_combo = ttk.Combobox(
-            form, state="readonly", width=14, textvariable=vat_var,
-            values=[label for label, _ in VAT_RATE_OPTIONS],
-        )
-        vat_combo.grid(row=3, column=1, sticky="w", pady=4)
-        vat_combo.current(0)
-
-        def on_service_selected(_=None):
-            service = by_label.get(service_var.get())
-            if service and not price_var.get().strip():
-                price_var.set(f"{(service['retail_price'] or 0):.2f}")
-
-        service_combo.bind("<<ComboboxSelected>>", on_service_selected)
-
-        rate_by_label = dict(VAT_RATE_OPTIONS)
-
-        def add():
-            service = by_label.get(service_var.get())
-            if not service:
-                messagebox.showwarning("Service", "Choose a service.", parent=dialog)
+        def save():
+            data = {key: entry.get().strip() for key, entry in entries.items()}
+            if not data["name"]:
+                messagebox.showwarning("Missing name", "Please enter a customer name.", parent=dialog)
                 return
             try:
-                quantity = int(qty_var.get())
-                price = float(price_var.get()) if price_var.get().strip() else (service["retail_price"] or 0.0)
-            except ValueError:
-                messagebox.showwarning("Invalid", "Enter a whole-number quantity and numeric price.", parent=dialog)
+                customer_id = customer_db.add_customer(
+                    data["name"], "", data["contact"], data["email"], data["phone"],
+                )
+            except customer_db.DuplicateNameError:
+                messagebox.showerror(
+                    "Duplicate name", f"A customer named '{data['name']}' already exists.",
+                    parent=dialog,
+                )
                 return
-            if quantity <= 0:
-                messagebox.showwarning("Invalid", "Quantity must be greater than zero.", parent=dialog)
-                return
-            on_add({
-                "item_type": "service", "product_id": None, "service_id": service["id"],
-                "description": f"{service['service_code'] or ''} {service['service_name']}".strip(),
-                "quantity": quantity, "unit_price": price,
-                "vat_rate": rate_by_label[vat_var.get()],
-            })
+            on_created(customer_id, data["name"])
             dialog.destroy()
 
-        btns = ttk.Frame(form)
-        btns.grid(row=4, column=0, columnspan=2, sticky="e", pady=(10, 0))
-        ttk.Button(btns, text="Add", command=add).pack(side="left")
+        btns = ttk.Frame(frame)
+        btns.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(btns, text="Save", command=save).pack(side="left")
         ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side="left", padx=(8, 0))
-        service_combo.focus_set()
-        self.wait_window(dialog)
+        entries["name"].focus_set()
+
+    def open_customer_search_dialog(self, on_selected):
+        """Modal to search the customer database; calls on_selected(id, name)."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Find Customer")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.geometry("540x440")
+
+        bar = ttk.Frame(dialog, padding=10)
+        bar.pack(fill="x")
+        ttk.Label(bar, text="Search:").pack(side="left")
+        term = tk.StringVar()
+        entry = ttk.Entry(bar, textvariable=term)
+        entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        entry.focus_set()
+
+        tree_frame = ttk.Frame(dialog, padding=(10, 0))
+        tree_frame.pack(fill="both", expand=True)
+        cols = ("name", "account_number", "contact", "phone")
+        tree = ttk.Treeview(tree_frame, columns=cols, show="headings")
+        for col, heading, width in zip(
+            cols, ("Name", "Account #", "Contact", "Phone"), (190, 90, 130, 110)
+        ):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        sb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        make_sortable(tree)
+
+        all_customers = customer_db.get_all_customers()
+        name_by_id = {c["id"]: c["name"] for c in all_customers}
+
+        def refresh(*_):
+            needle = term.get().strip().lower()
+            tree.delete(*tree.get_children())
+            for c in all_customers:
+                hay = " ".join(
+                    str(c[k] or "") for k in ("name", "account_number", "contact", "email", "phone")
+                ).lower()
+                if not needle or needle in hay:
+                    tree.insert(
+                        "", "end", iid=str(c["id"]),
+                        values=(c["name"], c["account_number"] or "", c["contact"] or "",
+                                c["phone"] or ""),
+                    )
+
+        def choose(*_):
+            selection = tree.selection()
+            if not selection:
+                return
+            customer_id = int(selection[0])
+            on_selected(customer_id, name_by_id[customer_id])
+            dialog.destroy()
+
+        term.trace_add("write", refresh)
+        # Enter in the search box drops focus to the first result.
+        entry.bind("<Return>", lambda e: self._focus_first_row(tree))
+        tree.bind("<Return>", choose)
+        tree.bind("<Double-1>", choose)
+
+        btns = ttk.Frame(dialog, padding=10)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Select", command=choose).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side="right", padx=(0, 8))
+        refresh()
+
+    @staticmethod
+    def _focus_first_row(tree):
+        children = tree.get_children()
+        if children:
+            tree.focus_set()
+            tree.selection_set(children[0])
+            tree.focus(children[0])
+
+    def open_service_picker(self, on_add):
+        """Search-driven window to add service lines (mirrors product allocation).
+        Search, press Enter for a results table, then select a service to add it
+        (a quantity/price/VAT dialog follows). Stays open so several can be added.
+        Each addition calls on_add(line_dict)."""
+        if not service_db.list_services():
+            messagebox.showinfo("No services", "There are no services yet. Add some under Services.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Add Service")
+        win.geometry("680x460")
+        win.transient(self)
+        win.grab_set()
+
+        result_map = {}  # iid -> service Row
+
+        search = ttk.Frame(win, padding=10)
+        search.pack(fill="x")
+        term_var = tk.StringVar()
+        ttk.Label(search, text="Search:").pack(side="left")
+        search_entry = ttk.Entry(search, textvariable=term_var, width=30)
+        search_entry.pack(side="left", padx=(8, 8))
+        search_entry.bind("<Return>", lambda e: do_search())
+        ttk.Button(search, text="Search", command=lambda: do_search()).pack(side="left")
+        ttk.Button(search, text="Clear", command=lambda: clear()).pack(side="left", padx=(6, 0))
+
+        res_frame = ttk.Frame(win, padding=(10, 0))
+        res_frame.pack(fill="both", expand=True)
+        rcols = ("code", "name", "cost", "retail")
+        results = ttk.Treeview(res_frame, columns=rcols, show="headings", height=12)
+        for col, heading, width, anchor in [
+            ("code", "Code", 120, "w"), ("name", "Service", 300, "w"),
+            ("cost", "Cost", 100, "e"), ("retail", "Retail Price", 110, "e"),
+        ]:
+            results.heading(col, text=heading)
+            results.column(col, width=width, anchor=anchor)
+        make_sortable(results)
+        rsb = ttk.Scrollbar(res_frame, orient="vertical", command=results.yview)
+        results.configure(yscrollcommand=rsb.set)
+        rsb.pack(side="right", fill="y")
+        results.pack(side="left", fill="both", expand=True)
+
+        res_status = ttk.Label(win, text="Search services by code or name.", padding=(10, 4))
+        res_status.pack(anchor="w")
+
+        foot = ttk.Frame(win, padding=10)
+        foot.pack(fill="x")
+        ttk.Button(foot, text="Add Selected", command=lambda: add_selected()).pack(side="left")
+        ttk.Button(foot, text="Close", command=win.destroy).pack(side="right")
+
+        def do_search():
+            results.delete(*results.get_children())
+            result_map.clear()
+            rows = service_db.list_services(text=term_var.get().strip())
+            for s in rows:
+                results.insert(
+                    "", "end", iid=str(s["id"]),
+                    values=(s["service_code"] or "—", s["service_name"],
+                            f"{(s['cost'] or 0):,.2f}", f"{(s['retail_price'] or 0):,.2f}"),
+                )
+                result_map[str(s["id"])] = s
+            children = results.get_children()
+            if children:
+                self._focus_first_row(results)
+                res_status.config(text=f"{len(children)} service(s) — Enter to add.")
+            else:
+                res_status.config(text="No services found.")
+
+        def clear():
+            term_var.set("")
+            results.delete(*results.get_children())
+            result_map.clear()
+            res_status.config(text="Search services by code or name.")
+            search_entry.focus_set()
+
+        def add_selected():
+            selection = results.selection()
+            if not selection:
+                return
+            service = result_map.get(selection[0])
+            if not service:
+                return
+            # Add quantity 1 at the service's retail price, then return to the sale.
+            on_add({
+                "item_type": "service", "product_id": None, "service_id": service["id"],
+                "description": service["service_name"], "quantity": 1,
+                "unit_price": service["retail_price"] or 0.0,
+                "vat_rate": VAT_RATE_OPTIONS[0][1],
+            })
+            win.destroy()
+
+        results.bind("<Return>", lambda e: add_selected())
+        results.bind("<Double-1>", lambda e: add_selected())
+
+        # Start empty — results appear only after a search.
+        search_entry.focus_set()
 
     # ------------------------------------------------------------------- Receipts
 
@@ -2743,12 +3081,12 @@ class App(tk.Tk):
             messagebox.showinfo("Saved", "Receipt recorded.")
             self.show_receipts(customer_id)
 
+        cancel = self._discard_guard(lambda: self.show_receipts(customer_id))
         btns = ttk.Frame(self.container)
         btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save Receipt", command=save).pack(side="left")
-        ttk.Button(
-            btns, text="Cancel", command=lambda: self.show_receipts(customer_id)
-        ).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Save Receipt (Ctrl+S)", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
+        self._bind_form_shortcuts(save=save, cancel=cancel)
 
 
 if __name__ == "__main__":
