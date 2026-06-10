@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox
 
 import suppliers as db
 import purchases as purchase_db
+import money
 
 from ui_common import AutocompleteCombobox, make_sortable
 
@@ -208,9 +209,9 @@ class PurchasesMixin:
             lines_tree.delete(*lines_tree.get_children())
             net_total = vat_total = gross_total = 0.0
             for index, ln in enumerate(lines):
-                net = ln["quantity"] * ln["cost_price"]
-                vat = net * ln["vat_rate"] / 100.0
-                gross = net + vat
+                net, vat, gross = money.line_amounts(
+                    ln["quantity"], ln["cost_price"], ln["vat_rate"]
+                )
                 net_total += net
                 vat_total += vat
                 gross_total += gross

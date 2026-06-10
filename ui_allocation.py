@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import products as product_db
+import money
 
 from ui_common import AutocompleteCombobox, make_sortable, VAT_RATE_OPTIONS
 
@@ -265,9 +266,9 @@ class AllocationMixin:
             basket_tree.delete(*basket_tree.get_children())
             net_total = vat_total = gross_total = 0.0
             for index, it in enumerate(basket):
-                net = it["quantity"] * it["cost_price"]
-                vat = net * it["vat_rate"] / 100.0
-                gross = net + vat
+                net, vat, gross = money.line_amounts(
+                    it["quantity"], it["cost_price"], it["vat_rate"]
+                )
                 net_total += net
                 vat_total += vat
                 gross_total += gross
@@ -358,9 +359,9 @@ class AllocationMixin:
 
         def preview(*_):
             try:
-                gross = int(qty_var.get()) * float(cost_var.get()) * (
-                    1 + rate_by_label[vat_var.get()] / 100.0
-                )
+                gross = money.line_amounts(
+                    int(qty_var.get()), float(cost_var.get()), rate_by_label[vat_var.get()]
+                ).gross
                 gross_label.config(text=f"Line total (inc VAT): {gross:,.2f}")
             except (ValueError, KeyError):
                 gross_label.config(text="")
