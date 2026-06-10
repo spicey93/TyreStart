@@ -215,11 +215,15 @@ def create_product(description, brand="", model="", ean="", manufacturer_code=""
         return cursor.lastrowid
 
 
-# Current stock = sum of quantities from INVOICED purchase lines (orders don't count).
+# Current stock = invoiced purchases - sold quantities (sales with status 'Sale').
+# Purchase Orders and sale Quotes don't count.
 STOCK_EXPR = (
-    "COALESCE((SELECT SUM(pi.quantity) FROM purchase_items pi "
+    "(COALESCE((SELECT SUM(pi.quantity) FROM purchase_items pi "
     "JOIN purchases pu ON pu.id = pi.purchase_id "
-    "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0)"
+    "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0) "
+    "- COALESCE((SELECT SUM(si.quantity) FROM sale_items si "
+    "JOIN sales sa ON sa.id = si.sale_id "
+    "WHERE si.product_id = products.id AND sa.status = 'Sale'), 0))"
 )
 STOCK_SUBQUERY = STOCK_EXPR + " AS stock"
 
@@ -310,14 +314,21 @@ def search_products_adv(stock_code="", brand="", model="", limit=200):
 
 
 def product_stock(product_id):
-    """Current stock for a product (sum of invoiced purchase quantities)."""
+    """Current stock for a product = invoiced purchases - sold ('Sale' status)."""
     with get_connection() as conn:
-        return conn.execute(
+        purchased = conn.execute(
             "SELECT COALESCE(SUM(pi.quantity), 0) FROM purchase_items pi "
             "JOIN purchases pu ON pu.id = pi.purchase_id "
             "WHERE pi.product_id = ? AND pu.status = 'Invoice'",
             (product_id,),
         ).fetchone()[0]
+        sold = conn.execute(
+            "SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si "
+            "JOIN sales sa ON sa.id = si.sale_id "
+            "WHERE si.product_id = ? AND sa.status = 'Sale'",
+            (product_id,),
+        ).fetchone()[0]
+        return purchased - sold
 
 
 def get_product(product_id):

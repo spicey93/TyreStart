@@ -1,0 +1,185 @@
+"""Sales data-access layer.
+
+A sale belongs to a customer, is a 'Quote' or a 'Sale', and contains line items
+that are either a product or a service (each with quantity, a net unit price and
+a VAT rate). Only sales with status 'Sale' reduce product stock (see products.py).
+"""
+
+import datetime
+
+from database import get_connection
+
+STATUSES = ("Quote", "Sale")
+DEFAULT_VAT_RATE = 20.0
+
+# SQL fragments for line money (unqualified columns; `si.` variant for subqueries).
+_LINE_NET = "quantity * unit_price"
+_LINE_VAT = "quantity * unit_price * COALESCE(vat_rate, 20) / 100.0"
+_LINE_GROSS = "quantity * unit_price * (1 + COALESCE(vat_rate, 20) / 100.0)"
+_SI_GROSS = "si.quantity * si.unit_price * (1 + COALESCE(si.vat_rate, 20) / 100.0)"
+
+
+def _now():
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def create_table():
+    """Create the sales and sale_items tables if needed."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sales (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL REFERENCES customers(id),
+                status      TEXT NOT NULL,
+                reference   TEXT,
+                date        TEXT,
+                created_at  TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sale_items (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                sale_id     INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+                item_type   TEXT NOT NULL,                     -- 'product' or 'service'
+                product_id  INTEGER REFERENCES products(id),
+                service_id  INTEGER REFERENCES services(id),
+                description TEXT,
+                quantity    INTEGER NOT NULL,
+                unit_price  REAL NOT NULL,
+                vat_rate    REAL NOT NULL DEFAULT 20
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items(product_id)"
+        )
+
+
+def _insert_items(conn, sale_id, items):
+    conn.executemany(
+        "INSERT INTO sale_items "
+        "(sale_id, item_type, product_id, service_id, description, quantity, unit_price, vat_rate) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (sale_id, it["item_type"], it.get("product_id"), it.get("service_id"),
+             it.get("description", ""), it["quantity"], it["unit_price"],
+             it.get("vat_rate", DEFAULT_VAT_RATE))
+            for it in items
+        ],
+    )
+
+
+def create_sale(customer_id, status, reference, date, items):
+    """Insert a sale with its line items. Returns the new sale id."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO sales (customer_id, status, reference, date, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (customer_id, status, reference, date, _now()),
+        )
+        sale_id = cursor.lastrowid
+        _insert_items(conn, sale_id, items)
+        return sale_id
+
+
+def update_sale(sale_id, customer_id, status, reference, date, items):
+    """Update a sale, replacing all of its line items."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE sales SET customer_id = ?, status = ?, reference = ?, date = ? "
+            "WHERE id = ?",
+            (customer_id, status, reference, date, sale_id),
+        )
+        conn.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
+        _insert_items(conn, sale_id, items)
+
+
+def delete_sale(sale_id):
+    """Delete a sale (its line items cascade)."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+
+
+def get_sale(sale_id):
+    """Return the sale row (with customer name), or None."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT s.id, s.customer_id, s.status, s.reference, s.date, "
+            "c.name AS customer_name "
+            "FROM sales s JOIN customers c ON c.id = s.customer_id "
+            "WHERE s.id = ?",
+            (sale_id,),
+        ).fetchone()
+
+
+def get_sale_items(sale_id):
+    """Return the line items for a sale."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT id, item_type, product_id, service_id, description, quantity, "
+            "unit_price, vat_rate FROM sale_items WHERE sale_id = ? ORDER BY id",
+            (sale_id,),
+        ).fetchall()
+
+
+def sale_totals(sale_id):
+    """Return {'net', 'vat', 'gross'} for a sale."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT COALESCE(SUM({_LINE_NET}), 0) AS net, "
+            f"COALESCE(SUM({_LINE_VAT}), 0) AS vat, "
+            f"COALESCE(SUM({_LINE_GROSS}), 0) AS gross "
+            "FROM sale_items WHERE sale_id = ?",
+            (sale_id,),
+        ).fetchone()
+        return {"net": row["net"], "vat": row["vat"], "gross": row["gross"]}
+
+
+def customer_sales(customer_id, outstanding_only=False):
+    """A customer's 'Sale's with total, allocated and outstanding amounts.
+
+    Returns a list of dicts so the computed `outstanding` is available directly.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT s.id, s.reference, s.date, "
+            f"COALESCE((SELECT SUM({_SI_GROSS}) FROM sale_items si "
+            "          WHERE si.sale_id = s.id), 0) AS total, "
+            "COALESCE((SELECT SUM(ra.amount) FROM receipt_allocations ra "
+            "          WHERE ra.sale_id = s.id), 0) AS allocated "
+            "FROM sales s "
+            "WHERE s.customer_id = ? AND s.status = 'Sale' "
+            "ORDER BY s.id",
+            (customer_id,),
+        ).fetchall()
+    result = []
+    for r in rows:
+        outstanding = round(r["total"] - r["allocated"], 2)
+        if outstanding_only and outstanding <= 0:
+            continue
+        result.append({
+            "id": r["id"], "reference": r["reference"], "date": r["date"],
+            "total": r["total"], "allocated": r["allocated"], "outstanding": outstanding,
+        })
+    return result
+
+
+def list_sales(text="", status=""):
+    """List sales (with customer name and gross total) for the list view."""
+    like = f"%{text}%"
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT s.id, s.reference, s.status, s.date, s.customer_id, "
+            "c.name AS customer_name, "
+            f"COALESCE((SELECT SUM({_SI_GROSS}) FROM sale_items si "
+            "          WHERE si.sale_id = s.id), 0) AS total "
+            "FROM sales s JOIN customers c ON c.id = s.customer_id "
+            "WHERE (s.reference LIKE ? COLLATE NOCASE OR c.name LIKE ? COLLATE NOCASE) "
+            "AND (? = '' OR s.status = ?) "
+            "ORDER BY s.id DESC",
+            (like, like, status, status),
+        ).fetchall()

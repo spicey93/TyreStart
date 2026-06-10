@@ -26,7 +26,7 @@ add it here.
   path and the shared `get_connection()`; `database.init_db()` creates all tables at
   startup.
 - **One data-access module per entity** (`suppliers.py`, `products.py`, `purchases.py`,
-  `payments.py`, `nominals.py`, `services.py`). Each imports `get_connection` from `database.py`,
+  `payments.py`, `nominals.py`, `services.py`, `customers.py`, `sales.py`, `receipts.py`). Each imports `get_connection` from `database.py`,
   exposes a `create_table()`, and keeps **all of that entity's SQL**. The UI calls
   functions like `db.get_all_suppliers()` and never writes SQL inline. The data layer
   raises domain errors (e.g. `DuplicateNameError`) instead of leaking `sqlite3` errors.
@@ -43,9 +43,16 @@ add it here.
   `init_db()`), or create rows and delete only the ids you created. UI build harnesses
   must be read-only.
 - **Derived totals/balances are computed in SQL, never stored**: a purchase total is
-  `SUM(qty*cost)` over its lines; product stock is `SUM(qty)` over *invoiced* lines; a
-  supplier balance is `Σ invoices − Σ payments`. Keep these as functions in the owning
-  module so every screen agrees.
+  `SUM(qty*cost)` over its lines; **product stock = invoiced purchase qty − sold qty**
+  (sales with status `Sale`; purchase Orders and sale Quotes don't count); a supplier
+  balance is `Σ invoices − Σ payments`. Keep these as functions in the owning module
+  (e.g. `products.STOCK_EXPR` / `product_stock`) so every screen agrees.
+- **Mixed line items**: a sale line is a product OR a service — `sale_items` has
+  `item_type` ('product'/'service') plus nullable `product_id`/`service_id`, a snapshot
+  `description`, and net `unit_price` + `vat_rate`. The purchase line-item dialog/window
+  is reused for the product side (`open_product_allocation(on_submit, price_label=...)`);
+  services are added one at a time via `open_service_picker` (defaults price to the
+  service's retail price). Status (Quote/Sale) mirrors purchases' Order/Invoice.
 - **Bulk imports** (e.g. a CSV catalogue) live in the entity module as an
   `import_from_csv(path, replace=True)` function — replace-on-reload so re-running is
   idempotent. Map source columns explicitly (skip junk/constant columns).
@@ -53,14 +60,19 @@ add it here.
 ## Navigation & menu bar
 - `Home` is a flat command (`Home [F1]` — top-level items don't render `accelerator=`,
   so the shortcut goes in the label text).
-- Each **section is a dropdown cascade** with an `All <X>` and a `New <X>` item
-  (Suppliers / Products / Purchases). Put the F-key in the cascade label
-  (`Suppliers [F2]`).
-- **F-keys open (post) the matching dropdown** rather than jumping straight to a view:
-  `_post_section_menu(menu, x_offset)` calls `menu.tk_popup(...)` (cascades are stored on
-  `self`). The posted native menu is then driven with **arrow keys + Enter** — one
-  consistent keyboard path to both `All <X>` and `New <X>`. No per-item accelerators, and
-  no separate `Ctrl+N`.
+- Each **section** (Suppliers / Products / Purchases / Services / Customers / Sales) is a
+  menubar **command** (not a native cascade) labelled with its F-key (`Suppliers [F2]`).
+  Clicking it — or pressing its F-key — opens a custom dropdown.
+- **Custom dropdown, not a native menu.** `_open_section(key)` shows an in-window overlay
+  (a placed `tk.Frame` + `Listbox`) under the menubar, highlights the first item, and
+  focuses it; navigate with **arrows + Enter** (Escape closes). It's an in-window overlay
+  (not a `Toplevel`/`tk_popup`) for two reasons: native popups run a **modal loop** that
+  swallows the next F-key (forcing an Escape to switch), and `overrideredirect` windows
+  take keyboard focus unreliably on Windows. Because the overlay stays in Tk's event loop,
+  **pressing another F-key while one is open switches straight to it** (`bind_all` fires
+  from the focused listbox). `_clear_container` closes any open overlay on view switch.
+- The single source of truth for section items is `_sections()` → `{key: (x_offset,
+  [(label, command), …])}`. No per-item accelerators, no separate `Ctrl+N`.
 - **No "+ New" buttons in page headers** — creation lives in the menu dropdown.
 
 ## Page header pattern
@@ -143,11 +155,17 @@ For a record that owns a list of sub-rows (e.g. a Purchase with product lines):
   basket submits** — so a whole basket can be built without the mouse.
 
 ## Account / balance section
-A record that has money movements (a supplier) shows an **Account** `ttk.LabelFrame` on
-its edit screen: the **Balance** plus **Make Payment** / **View Payments** /
-**View Purchases** buttons. Payments are allocated to outstanding invoices via a small
-grid (reference/date/total/outstanding + a "Pay" entry per row); the payment total is the
-sum of allocations (shown live via `StringVar.trace_add`).
+A record with money movements shows an **Account** `ttk.LabelFrame` on its edit screen:
+the **Balance** plus allocation actions. This is symmetric across the two sides:
+- **Supplier** (purchases side): balance = `Σ invoices − Σ payments`; buttons **Make
+  Payment** / **View Payments** / **View Purchases**; payments draw *from* a nominal
+  account and allocate to outstanding **invoices**.
+- **Customer** (sales side): balance = `Σ Sales − Σ receipts` (Quotes excluded); buttons
+  **Record Receipt** / **View Receipts** / **View Sales**; receipts deposit *to* a nominal
+  account and allocate to outstanding **sales**.
+Allocation uses a small grid (reference/date/total/outstanding + an amount entry per row);
+the total is the sum of allocations, shown live via `StringVar.trace_add`. An invoice/sale
+with allocations against it can't be deleted (FK), surfaced as a friendly error.
 
 ## Search / filter bar
 - A `ttk.Frame(fill="x")` on a grid above the table: `Search:` label, entry, `Filter:`
@@ -161,6 +179,11 @@ sum of allocations (shown live via `StringVar.trace_add`).
   dropdown filter **combine** (text AND brand) in one SQL query.
 
 ## Keyboard behavior (first-class, not an afterthought)
+- **Every view auto-focuses its first interactive widget on load.** `_clear_container()`
+  schedules `self.after_idle(self._focus_first_input)`, which (once the new view is built)
+  focuses the first entry/combobox, else the first table, else the first button. So no
+  screen needs its own `focus_set()` — it's universal. Toplevel dialogs are separate and
+  still set their own initial focus.
 - **Enter activates the focused button** app-wide: `bind_class("TButton", "<Return>", ...)`.
 - Global navigation shortcuts via `bind_all` (e.g. `F1` Home, `F2` Suppliers, `F3`
   Products, `F4` Purchases).

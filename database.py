@@ -30,6 +30,9 @@ def init_db():
     import purchases
     import payments
     import services
+    import customers
+    import sales
+    import receipts
 
     suppliers.create_table()
     products.create_table()
@@ -37,3 +40,6 @@ def init_db():
     purchases.create_table()
     payments.create_table()
     services.create_table()
+    customers.create_table()
+    sales.create_table()
+    receipts.create_table()

@@ -1,0 +1,87 @@
+"""Customers data-access layer.
+
+Mirrors suppliers: a customer has a unique name plus account number, contact,
+email and phone. Stored in the central app.db.
+"""
+
+import sqlite3
+
+from database import get_connection
+
+
+class DuplicateNameError(Exception):
+    """Raised when a customer name collides with an existing one."""
+
+
+def create_table():
+    """Create the customers table (with a unique name index) if needed."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS customers (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                name           TEXT NOT NULL,
+                account_number TEXT,
+                contact        TEXT,
+                email          TEXT,
+                phone          TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_name "
+            "ON customers(name COLLATE NOCASE)"
+        )
+
+
+def add_customer(name, account_number="", contact="", email="", phone=""):
+    """Insert a customer and return its id. Raises DuplicateNameError on clash."""
+    with get_connection() as conn:
+        try:
+            cursor = conn.execute(
+                "INSERT INTO customers (name, account_number, contact, email, phone) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, account_number, contact, email, phone),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateNameError(name) from exc
+        return cursor.lastrowid
+
+
+def update_customer(customer_id, name, account_number="", contact="", email="", phone=""):
+    """Update a customer. Raises DuplicateNameError if the name clashes."""
+    with get_connection() as conn:
+        try:
+            conn.execute(
+                "UPDATE customers "
+                "SET name = ?, account_number = ?, contact = ?, email = ?, phone = ? "
+                "WHERE id = ?",
+                (name, account_number, contact, email, phone, customer_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateNameError(name) from exc
+
+
+def get_customer(customer_id):
+    """Return a single customer row by id, or None."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT id, name, account_number, contact, email, phone "
+            "FROM customers WHERE id = ?",
+            (customer_id,),
+        ).fetchone()
+
+
+def get_all_customers():
+    """Return all customers ordered by name."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT id, name, account_number, contact, email, phone "
+            "FROM customers ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+
+
+def delete_customer(customer_id):
+    """Delete a customer by id."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
