@@ -89,7 +89,10 @@ def apply_formula(cost, rule):
             price = price * (1 + pct / 100.0)
     price += rule["fixed_uplift"] or 0.0
     if rule["round_up"]:
-        price = math.ceil(price)
+        # Round to pennies before ceiling so floating-point noise (e.g. a price
+        # that is mathematically 60.00 but computes as 60.0000000001) doesn't
+        # round a whole pound too high.
+        price = math.ceil(round(price, 2))
     return round(price, 2)
 
 
