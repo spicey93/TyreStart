@@ -12,6 +12,7 @@ import services as service_db
 import customers as customer_db
 import sales as sale_db
 import receipts as receipt_db
+import pricing as pricing_db
 
 # VAT rate options for the line dialog: (label shown, rate percent).
 VAT_RATE_OPTIONS = [("20% (Standard)", 20.0), ("5% (Reduced)", 5.0), ("0% (Zero)", 0.0)]
@@ -140,7 +141,8 @@ class App(tk.Tk):
             "suppliers": (60, [("All Suppliers", self.show_all_suppliers),
                                ("New Supplier", self.show_create_supplier)]),
             "products": (150, [("All Products", self.show_products),
-                               ("New Product", self.show_product_form)]),
+                               ("New Product", self.show_product_form),
+                               ("Pricing Rules", self.show_pricing_rules)]),
             "purchases": (245, [("All Purchases", self.show_purchases),
                                 ("New Purchase", self.show_purchase_form)]),
             "services": (340, [("All Services", self.show_services),
@@ -550,13 +552,19 @@ class App(tk.Tk):
 
         def populate(rows, total):
             tree.delete(*tree.get_children())
+            rules = pricing_db.list_rules()  # fetched once; price computed per row
             for p in rows:
+                price = pricing_db.price_from_rules(
+                    p["avg_cost"], p["pricing_key"] or "", p["product_group"] or "",
+                    rules=rules,
+                )
                 tree.insert(
                     "",
                     "end",
                     iid=str(p["id"]),
                     values=(
                         p["stock_code"], p["description"], p["brand"], p["stock"],
+                        f"{price:,.2f}" if price is not None else "—",
                         p["rolling_resistance"], p["wet_grip"], p["noise_class"],
                         p["noise_performance"], p["vehicle_type"],
                     ),
@@ -618,14 +626,16 @@ class App(tk.Tk):
         )
 
         columns = (
-            "stock_code", "description", "brand", "stock", "rolling_resistance",
-            "wet_grip", "noise_class", "noise_performance", "vehicle_type",
+            "stock_code", "description", "brand", "stock", "price",
+            "rolling_resistance", "wet_grip", "noise_class", "noise_performance",
+            "vehicle_type",
         )
         headings = (
-            "Stock Code", "Description", "Brand", "Stock", "Rolling Resistance",
-            "Wet Grip", "Noise Class", "Noise Performance", "Vehicle Type",
+            "Stock Code", "Description", "Brand", "Stock", "Price",
+            "Rolling Resistance", "Wet Grip", "Noise Class", "Noise Performance",
+            "Vehicle Type",
         )
-        widths = (120, 230, 100, 60, 120, 80, 90, 120, 90)
+        widths = (120, 230, 100, 60, 80, 120, 80, 90, 120, 90)
 
         # Tree + scrollbar live in their own frame so the scrollbar sits flush
         # against the table.
@@ -639,6 +649,8 @@ class App(tk.Tk):
         for col, heading, width in zip(columns, headings, widths):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
+        tree.column("stock", anchor="e")
+        tree.column("price", anchor="e")
         make_sortable(tree)
 
         status_label = ttk.Label(self.container, text="")
@@ -684,6 +696,10 @@ class App(tk.Tk):
         fields = [
             ("Stock Code", "stock_code"),
             ("Stock", "__stock__"),
+            ("Avg Cost", "__avg_cost__"),
+            ("Price", "__price__"),
+            ("Pricing Key", "pricing_key"),
+            ("Product Group", "product_group"),
             ("Brand", "brand"),
             ("Model", "model"),
             ("EAN", "ean"),
@@ -705,6 +721,11 @@ class App(tk.Tk):
                 value = f"{product['width']} / {product['aspect_ratio']} / {product['rim']}"
             elif key == "__stock__":
                 value = str(product_db.product_stock(product["id"]))
+            elif key == "__avg_cost__":
+                value = f"{product_db.average_cost(product['id']):,.2f}"
+            elif key == "__price__":
+                price = pricing_db.price_for_product(product["id"])
+                value = f"{price:,.2f}" if price is not None else "— (no matching rule)"
             else:
                 value = str(product[key] or "—")
             ttk.Label(detail, text=label + ":", font=("Segoe UI", 9, "bold")).grid(
@@ -739,6 +760,8 @@ class App(tk.Tk):
             ("noise_class", "Noise Class"),
             ("noise_performance", "Noise Performance"),
             ("vehicle_class", "Vehicle Class"),
+            ("pricing_key", "Pricing Key"),
+            ("product_group", "Product Group"),
         ]
         entries = {}
         for row, (key, label) in enumerate(fields):
@@ -750,7 +773,7 @@ class App(tk.Tk):
         ttk.Label(
             self.container,
             text="Stock Code is generated automatically from the size, brand and "
-            "manufacturer code.",
+            "manufacturer code. Pricing Key and Product Group are used by pricing rules.",
             foreground="gray",
         ).pack(anchor="w", pady=(10, 0))
 
@@ -767,6 +790,179 @@ class App(tk.Tk):
         btns.pack(anchor="w", pady=(15, 0))
         ttk.Button(btns, text="Save", command=save).pack(side="left")
         ttk.Button(btns, text="Cancel", command=self.show_products).pack(side="left", padx=(8, 0))
+
+    # --------------------------------------------------------------- Pricing Rules
+
+    @staticmethod
+    def _format_rule_formula(r):
+        parts = []
+        if r["uplift_percent"]:
+            parts.append(f"{r['uplift_percent']:g}% {r['uplift_type']}")
+        if r["fixed_uplift"]:
+            parts.append(f"+{r['fixed_uplift']:g} fixed")
+        text = ", ".join(parts) if parts else "no uplift"
+        if r["round_up"]:
+            text += " (round up)"
+        return text
+
+    @staticmethod
+    def _format_rule_conditions(r):
+        conds = []
+        if r["cond_cost_gt"] is not None:
+            conds.append(f"cost > {r['cond_cost_gt']:g}")
+        if r["pricing_key"]:
+            conds.append(f"key = {r['pricing_key']}")
+        if r["product_group"]:
+            conds.append(f"group = {r['product_group']}")
+        return ", ".join(conds) if conds else "any product"
+
+    def show_pricing_rules(self):
+        """List pricing rules with add/delete. Rules auto-apply across products."""
+        self.current_view = "pricing_rules"
+        self._clear_container()
+
+        header = ttk.Frame(self.container)
+        header.pack(fill="x", pady=(0, 10))
+        ttk.Label(header, text="Pricing Rules", font=("Segoe UI", 20, "bold")).pack(side="left")
+        ttk.Button(header, text="New Rule", command=self.show_pricing_rule_form).pack(side="right")
+
+        ttk.Label(
+            self.container,
+            text="Rules turn a product's average cost into a retail price. Where "
+            "several rules match, the most specific one (most conditions) wins.",
+            foreground="gray",
+        ).pack(anchor="w", pady=(0, 10))
+
+        columns = ("name", "formula", "conditions")
+        headings = ("Name", "Formula", "Conditions")
+        widths = (200, 320, 300)
+        table_frame = ttk.Frame(self.container)
+        table_frame.pack(fill="both", expand=True)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        make_sortable(tree)
+
+        status_label = ttk.Label(self.container, text="")
+        status_label.pack(anchor="w", pady=(8, 0))
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            rules = pricing_db.list_rules()
+            for r in rules:
+                tree.insert(
+                    "", "end", iid=str(r["id"]),
+                    values=(r["name"], self._format_rule_formula(r),
+                            self._format_rule_conditions(r)),
+                )
+            status_label.config(
+                text=f"{len(rules)} rule(s)." if rules
+                else "No pricing rules yet. Use New Rule to add one."
+            )
+
+        def delete_selected():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showinfo("No selection", "Please select a rule first.")
+                return
+            if messagebox.askyesno("Delete rule", "Delete this pricing rule?"):
+                pricing_db.delete_rule(int(selection[0]))
+                refresh()
+
+        btns = ttk.Frame(self.container)
+        btns.pack(anchor="w", pady=(10, 0))
+        ttk.Button(btns, text="Delete", command=delete_selected).pack(side="left")
+        tree.bind("<Delete>", lambda e: delete_selected())
+        refresh()
+
+    def show_pricing_rule_form(self):
+        """Create a pricing rule (name, variables, and matching conditions)."""
+        self.current_view = "pricing_rule_form"
+        self._clear_container()
+        ttk.Label(
+            self.container, text="New Pricing Rule", font=("Segoe UI", 20, "bold")
+        ).pack(anchor="w", pady=(0, 15))
+
+        name_var = tk.StringVar()
+        type_var = tk.StringVar(value="markup")
+        pct_var = tk.StringVar()
+        fixed_var = tk.StringVar()
+        round_var = tk.BooleanVar(value=False)
+        cost_gt_var = tk.StringVar()
+        key_var = tk.StringVar()
+        group_var = tk.StringVar()
+
+        form = ttk.Frame(self.container)
+        form.pack(anchor="w")
+
+        ttk.Label(form, text="Name:").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=name_var, width=38).grid(
+            row=0, column=1, columnspan=2, sticky="w", pady=5
+        )
+
+        # --- Variables ---
+        ttk.Label(form, text="Variables", font=("Segoe UI", 11, "bold")).grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(12, 4)
+        )
+        ttk.Label(form, text="Percentage uplift:").grid(row=2, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=pct_var, width=12).grid(row=2, column=1, sticky="w", pady=5)
+        ttk.Combobox(
+            form, state="readonly", width=10, textvariable=type_var,
+            values=list(pricing_db.PERCENT_TYPES),
+        ).grid(row=2, column=2, sticky="w", pady=5)
+
+        ttk.Label(form, text="Fixed uplift:").grid(row=3, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=fixed_var, width=12).grid(row=3, column=1, sticky="w", pady=5)
+
+        ttk.Checkbutton(
+            form, text="Round up to the nearest whole number", variable=round_var
+        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=5)
+
+        # --- Conditions ---
+        ttk.Label(form, text="Conditions", font=("Segoe UI", 11, "bold")).grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(12, 4)
+        )
+        ttk.Label(form, text="(leave blank for no condition)", foreground="gray").grid(
+            row=6, column=0, columnspan=3, sticky="w"
+        )
+        ttk.Label(form, text="Unit cost greater than:").grid(row=7, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=cost_gt_var, width=12).grid(row=7, column=1, sticky="w", pady=5)
+        ttk.Label(form, text="Pricing key:").grid(row=8, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=key_var, width=20).grid(row=8, column=1, columnspan=2, sticky="w", pady=5)
+        ttk.Label(form, text="Product group:").grid(row=9, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=group_var, width=20).grid(row=9, column=1, columnspan=2, sticky="w", pady=5)
+
+        def save():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Missing name", "Please enter a rule name.")
+                return
+            try:
+                pct = float(pct_var.get()) if pct_var.get().strip() else 0.0
+                fixed = float(fixed_var.get()) if fixed_var.get().strip() else 0.0
+                cost_gt = float(cost_gt_var.get()) if cost_gt_var.get().strip() else None
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid", "Percentage, fixed uplift and unit cost must be numbers."
+                )
+                return
+            pricing_db.create_rule(
+                name=name, uplift_type=type_var.get(), uplift_percent=pct,
+                fixed_uplift=fixed, round_up=round_var.get(), cond_cost_gt=cost_gt,
+                pricing_key=key_var.get().strip(), product_group=group_var.get().strip(),
+            )
+            messagebox.showinfo("Saved", f"Pricing rule '{name}' saved.")
+            self.show_pricing_rules()
+
+        btns = ttk.Frame(self.container)
+        btns.pack(anchor="w", pady=(15, 0))
+        ttk.Button(btns, text="Save", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel", command=self.show_pricing_rules).pack(side="left", padx=(8, 0))
 
     # ------------------------------------------------------------------ Purchases
 
@@ -1089,11 +1285,14 @@ class App(tk.Tk):
 
     # ------------------------------------------------------- Product Allocation
 
-    def open_product_allocation(self, on_submit, price_label="Unit Cost (net)"):
+    def open_product_allocation(self, on_submit, price_label="Unit Cost (net)",
+                                price_fn=None):
         """Modal window to search products, build a basket, and submit it.
         `on_submit` receives a list of line dicts
         (product_id, label, quantity, cost_price, vat_rate). `price_label` sets
-        the wording of the per-line price field (cost for purchases, price for sales)."""
+        the wording of the per-line price field (cost for purchases, price for
+        sales). `price_fn`, if given, is called with a product row to pre-fill the
+        price field (used on sales to suggest the pricing-rule retail price)."""
         win = tk.Toplevel(self)
         win.title("Product Allocation")
         win.geometry("920x620")
@@ -1268,7 +1467,8 @@ class App(tk.Tk):
             if not product:
                 return
             label = f"{product['stock_code']} — {product['description']}"
-            qc = self.ask_quantity_cost(win, label, price_label)
+            default_cost = price_fn(product) if price_fn else None
+            qc = self.ask_quantity_cost(win, label, price_label, default_cost=default_cost)
             if qc is None:
                 return
             quantity, cost, vat_rate = qc
@@ -1349,8 +1549,11 @@ class App(tk.Tk):
         self.wait_window(dialog)
         return result["value"]
 
-    def ask_quantity_cost(self, parent, product_label, price_label="Unit Cost (net)"):
-        """Modal dialog returning (quantity, net_unit_price, vat_rate) or None."""
+    def ask_quantity_cost(self, parent, product_label, price_label="Unit Cost (net)",
+                          default_cost=None):
+        """Modal dialog returning (quantity, net_unit_price, vat_rate) or None.
+        `default_cost`, if given, pre-fills the price field (e.g. a pricing-rule
+        retail price on sales) — still editable before adding."""
         dialog = tk.Toplevel(parent)
         dialog.title("Quantity & Unit Cost")
         dialog.transient(parent)
@@ -1361,7 +1564,7 @@ class App(tk.Tk):
         form = ttk.Frame(dialog, padding=(10, 0))
         form.pack(anchor="w")
         qty_var = tk.StringVar()
-        cost_var = tk.StringVar()
+        cost_var = tk.StringVar(value=f"{default_cost:.2f}" if default_cost else "")
         vat_var = tk.StringVar(value=VAT_RATE_OPTIONS[0][0])
 
         ttk.Label(form, text="Quantity:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
@@ -1965,7 +2168,7 @@ class App(tk.Tk):
         ttk.Label(bar, text="Status:").grid(row=0, column=2, sticky="w")
         status_combo = ttk.Combobox(
             bar, state="readonly", width=10, textvariable=status_choice,
-            values=["All", "Quote", "Sale"],
+            values=["All", "Quote", "Order", "Invoice"],
         )
         status_combo.grid(row=0, column=3, sticky="w", padx=(8, 10))
         status_combo.current(0)
@@ -2054,7 +2257,7 @@ class App(tk.Tk):
 
         customer_var = tk.StringVar()
         status_var = tk.StringVar(value="Quote")
-        reference_var = tk.StringVar()
+        reference_var = tk.StringVar(value="(auto-generated)")
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
 
         ttk.Label(head, text="Customer:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 10))
@@ -2069,7 +2272,10 @@ class App(tk.Tk):
         ).grid(row=1, column=1, sticky="w", pady=4)
 
         ttk.Label(head, text="Reference:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 10))
-        ttk.Entry(head, textvariable=reference_var, width=40).grid(row=2, column=1, sticky="w", pady=4)
+        # Autogenerated per status (Q…/O…/INV…); not user-editable.
+        ttk.Entry(head, textvariable=reference_var, width=40, state="readonly").grid(
+            row=2, column=1, sticky="w", pady=4
+        )
 
         ttk.Label(head, text="Date:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 10))
         ttk.Entry(head, textvariable=date_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
@@ -2080,7 +2286,10 @@ class App(tk.Tk):
         ttk.Label(items_header, text="Items", font=("Segoe UI", 12, "bold")).pack(side="left")
         ttk.Button(
             items_header, text="Add Product",
-            command=lambda: self.open_product_allocation(receive_products, "Unit Price (net)"),
+            command=lambda: self.open_product_allocation(
+                receive_products, "Unit Price (net)",
+                price_fn=lambda p: pricing_db.price_for_product(p["id"]),
+            ),
         ).pack(side="left", padx=(12, 0))
         ttk.Button(
             items_header, text="Add Service",
@@ -2231,8 +2440,7 @@ class App(tk.Tk):
             if not lines:
                 messagebox.showwarning("No items", "Add at least one product or service.")
                 return
-            args = (customer_id, status_var.get(), reference_var.get().strip(),
-                    date_var.get().strip(), lines)
+            args = (customer_id, status_var.get(), date_var.get().strip(), lines)
             if editing:
                 sale_db.update_sale(sale["id"], *args)
             else:
@@ -2261,7 +2469,7 @@ class App(tk.Tk):
         if editing:
             customer_var.set(sale["customer_name"])
             status_var.set(sale["status"])
-            reference_var.set(sale["reference"] or "")
+            reference_var.set(sale["reference"] or "(auto-generated)")
             date_var.set(sale["date"] or "")
             for it in sale_db.get_sale_items(sale["id"]):
                 lines.append({
@@ -2273,11 +2481,13 @@ class App(tk.Tk):
             refresh_lines()
         elif prefill_product is not None:
             # Started from the product list: add it straight away as a single line.
-            # Quantity/retail price are then editable inline in the items table.
+            # The retail price comes from the matching pricing rule (or 0 if none);
+            # quantity/price are then editable inline in the items table.
             label = f"{prefill_product['stock_code']} — {prefill_product['description']}"
+            price = pricing_db.price_for_product(prefill_product["id"]) or 0.0
             receive_products([{
                 "product_id": prefill_product["id"], "label": label,
-                "quantity": 1, "cost_price": 0.0, "vat_rate": VAT_RATE_OPTIONS[0][1],
+                "quantity": 1, "cost_price": price, "vat_rate": VAT_RATE_OPTIONS[0][1],
             }])
 
     def open_service_picker(self, on_add):

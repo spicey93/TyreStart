@@ -89,14 +89,16 @@ def create_table():
                 width             TEXT,
                 aspect_ratio      TEXT,
                 rim               TEXT,
-                stock_code        TEXT
+                stock_code        TEXT,
+                pricing_key       TEXT,
+                product_group     TEXT
             )
             """
         )
 
-        # Migrate tables created before the derived columns existed.
+        # Migrate tables created before the derived/pricing columns existed.
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
-        for column in DERIVED_COLUMNS:
+        for column in DERIVED_COLUMNS + ["pricing_key", "product_group"]:
             if column not in existing:
                 conn.execute(f"ALTER TABLE products ADD COLUMN {column} TEXT")
 
@@ -196,7 +198,8 @@ def get_models(brand="", size_prefix=""):
 
 def create_product(description, brand="", model="", ean="", manufacturer_code="",
                    product_type="", vehicle_type="", rolling_resistance="", wet_grip="",
-                   noise_class="", noise_performance="", vehicle_class=""):
+                   noise_class="", noise_performance="", vehicle_class="",
+                   pricing_key="", product_group=""):
     """Insert a manually-created product. Stock code/size are derived. Returns id."""
     width, aspect_ratio, rim = parse_size(description)
     stock_code = build_stock_code(width, aspect_ratio, rim, brand, manufacturer_code)
@@ -206,16 +209,18 @@ def create_product(description, brand="", model="", ean="", manufacturer_code=""
             "INSERT INTO products (sync_status, image_html, logo_html, description, ean, "
             "manufacturer_code, brand, model, product_type, vehicle_type, "
             "rolling_resistance, wet_grip, noise_class, noise_performance, vehicle_class, "
-            "created_date, updated_date, width, aspect_ratio, rim, stock_code) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_date, updated_date, width, aspect_ratio, rim, stock_code, "
+            "pricing_key, product_group) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("", "", "", description, ean, manufacturer_code, brand, model, product_type,
              vehicle_type, rolling_resistance, wet_grip, noise_class, noise_performance,
-             vehicle_class, today, today, width, aspect_ratio, rim, stock_code),
+             vehicle_class, today, today, width, aspect_ratio, rim, stock_code,
+             pricing_key, product_group),
         )
         return cursor.lastrowid
 
 
-# Current stock = invoiced purchases - sold quantities (sales with status 'Sale').
+# Current stock = invoiced purchases - sold quantities (sale Orders and Invoices).
 # Purchase Orders and sale Quotes don't count.
 STOCK_EXPR = (
     "(COALESCE((SELECT SUM(pi.quantity) FROM purchase_items pi "
@@ -223,9 +228,31 @@ STOCK_EXPR = (
     "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0) "
     "- COALESCE((SELECT SUM(si.quantity) FROM sale_items si "
     "JOIN sales sa ON sa.id = si.sale_id "
-    "WHERE si.product_id = products.id AND sa.status = 'Sale'), 0))"
+    "WHERE si.product_id = products.id AND sa.status IN ('Order', 'Invoice')), 0))"
 )
 STOCK_SUBQUERY = STOCK_EXPR + " AS stock"
+
+# Average unit cost = quantity-weighted cost across invoiced purchases (0 if none).
+AVG_COST_EXPR = (
+    "(SELECT CASE WHEN COALESCE(SUM(pi.quantity), 0) > 0 "
+    "THEN SUM(pi.quantity * pi.cost_price) / SUM(pi.quantity) ELSE 0 END "
+    "FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id "
+    "WHERE pi.product_id = products.id AND pu.status = 'Invoice')"
+)
+AVG_COST_SUBQUERY = AVG_COST_EXPR + " AS avg_cost"
+
+
+def average_cost(product_id):
+    """Quantity-weighted average unit cost from invoiced purchases (0 if none)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(pi.quantity), 0) AS qty, "
+            "COALESCE(SUM(pi.quantity * pi.cost_price), 0) AS spend "
+            "FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id "
+            "WHERE pi.product_id = ? AND pu.status = 'Invoice'",
+            (product_id,),
+        ).fetchone()
+        return row["spend"] / row["qty"] if row["qty"] else 0.0
 
 
 def query_products(text="", brand="", in_stock="all", limit=200):
@@ -258,7 +285,7 @@ def query_products(text="", brand="", in_stock="all", limit=200):
             f"SELECT COUNT(*) FROM products{where}", params
         ).fetchone()[0]
         rows = conn.execute(
-            f"SELECT products.*, {STOCK_SUBQUERY} FROM products{where} "
+            f"SELECT products.*, {STOCK_SUBQUERY}, {AVG_COST_SUBQUERY} FROM products{where} "
             "ORDER BY description COLLATE NOCASE LIMIT ?",
             params + [limit],
         ).fetchall()
@@ -314,7 +341,7 @@ def search_products_adv(stock_code="", brand="", model="", limit=200):
 
 
 def product_stock(product_id):
-    """Current stock for a product = invoiced purchases - sold ('Sale' status)."""
+    """Current stock = invoiced purchases - sold (sale Orders and Invoices)."""
     with get_connection() as conn:
         purchased = conn.execute(
             "SELECT COALESCE(SUM(pi.quantity), 0) FROM purchase_items pi "
@@ -325,7 +352,7 @@ def product_stock(product_id):
         sold = conn.execute(
             "SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si "
             "JOIN sales sa ON sa.id = si.sale_id "
-            "WHERE si.product_id = ? AND sa.status = 'Sale'",
+            "WHERE si.product_id = ? AND sa.status IN ('Order', 'Invoice')",
             (product_id,),
         ).fetchone()[0]
         return purchased - sold

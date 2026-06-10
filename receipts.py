@@ -89,13 +89,13 @@ def get_receipts(customer_id):
 
 
 def customer_balance(customer_id):
-    """Customer balance = sum of 'Sale' totals (gross) - sum of receipts."""
+    """Customer balance = sum of owed (Order/Invoice) totals (gross) - receipts."""
     with get_connection() as conn:
         sold = conn.execute(
             "SELECT COALESCE(SUM(si.quantity * si.unit_price * "
             "(1 + COALESCE(si.vat_rate, 20) / 100.0)), 0) "
             "FROM sale_items si JOIN sales sa ON sa.id = si.sale_id "
-            "WHERE sa.customer_id = ? AND sa.status = 'Sale'",
+            "WHERE sa.customer_id = ? AND sa.status IN ('Order', 'Invoice')",
             (customer_id,),
         ).fetchone()[0]
         received = conn.execute(
