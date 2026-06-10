@@ -1,0 +1,10 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+
+# Local SQLite database (live data + backup) — keep out of version control
+app.db
+app.db.bak
+
+# Bulk product-import seed data (large file) — store/back up separately
+products.csv
