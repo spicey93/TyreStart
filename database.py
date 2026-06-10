@@ -16,6 +16,7 @@ def get_connection():
     """Open a connection to the central database with row access by column name."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")  # enforce referential integrity
     return conn
 
 
@@ -25,6 +26,12 @@ def init_db():
     # entity modules import get_connection from this module.
     import suppliers
     import products
+    import nominals
+    import purchases
+    import payments
 
     suppliers.create_table()
     products.create_table()
+    nominals.create_table()
+    purchases.create_table()
+    payments.create_table()

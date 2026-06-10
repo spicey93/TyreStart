@@ -8,6 +8,7 @@ import we parse the tyre size out of the description and build a Stock Code.
 """
 
 import csv
+import datetime
 import re
 
 from database import get_connection
@@ -173,11 +174,51 @@ def get_brands():
         return [row["brand"] for row in rows]
 
 
+def get_models():
+    """Return the distinct non-empty model names, sorted case-insensitively."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT model FROM products WHERE model <> '' "
+            "ORDER BY model COLLATE NOCASE"
+        ).fetchall()
+        return [row["model"] for row in rows]
+
+
+def create_product(description, brand="", model="", ean="", manufacturer_code="",
+                   product_type="", vehicle_type="", rolling_resistance="", wet_grip="",
+                   noise_class="", noise_performance="", vehicle_class=""):
+    """Insert a manually-created product. Stock code/size are derived. Returns id."""
+    width, aspect_ratio, rim = parse_size(description)
+    stock_code = build_stock_code(width, aspect_ratio, rim, brand, manufacturer_code)
+    today = datetime.date.today().strftime("%d/%m/%y")
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO products (sync_status, image_html, logo_html, description, ean, "
+            "manufacturer_code, brand, model, product_type, vehicle_type, "
+            "rolling_resistance, wet_grip, noise_class, noise_performance, vehicle_class, "
+            "created_date, updated_date, width, aspect_ratio, rim, stock_code) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("", "", "", description, ean, manufacturer_code, brand, model, product_type,
+             vehicle_type, rolling_resistance, wet_grip, noise_class, noise_performance,
+             vehicle_class, today, today, width, aspect_ratio, rim, stock_code),
+        )
+        return cursor.lastrowid
+
+
+# Current stock = sum of quantities from INVOICED purchase lines (orders don't count).
+STOCK_SUBQUERY = (
+    "COALESCE((SELECT SUM(pi.quantity) FROM purchase_items pi "
+    "JOIN purchases pu ON pu.id = pi.purchase_id "
+    "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0) AS stock"
+)
+
+
 def query_products(text="", brand="", limit=200):
     """Filter products by free text and/or an exact brand.
 
     `text` matches the description OR the stock code (case-insensitive).
     `brand` (when given) restricts to that exact brand.
+    Each row includes a `stock` column (invoiced quantity).
     Returns (rows, total_matches) so the UI can report how many were capped.
     """
     clauses, params = [], []
@@ -197,10 +238,47 @@ def query_products(text="", brand="", limit=200):
             f"SELECT COUNT(*) FROM products{where}", params
         ).fetchone()[0]
         rows = conn.execute(
+            f"SELECT products.*, {STOCK_SUBQUERY} FROM products{where} "
+            "ORDER BY description COLLATE NOCASE LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        return rows, total
+
+
+def search_products_adv(stock_code="", brand="", model="", limit=200):
+    """Search by stock code (contains) and/or exact brand/model. For the
+    Product Allocation window. Returns (rows, total_matches)."""
+    clauses, params = [], []
+    if stock_code:
+        clauses.append("stock_code LIKE ? COLLATE NOCASE")
+        params.append(f"%{stock_code}%")
+    if brand:
+        clauses.append("brand = ? COLLATE NOCASE")
+        params.append(brand)
+    if model:
+        clauses.append("model = ? COLLATE NOCASE")
+        params.append(model)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with get_connection() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM products{where}", params
+        ).fetchone()[0]
+        rows = conn.execute(
             f"SELECT * FROM products{where} ORDER BY description COLLATE NOCASE LIMIT ?",
             params + [limit],
         ).fetchall()
         return rows, total
+
+
+def product_stock(product_id):
+    """Current stock for a product (sum of invoiced purchase quantities)."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT COALESCE(SUM(pi.quantity), 0) FROM purchase_items pi "
+            "JOIN purchases pu ON pu.id = pi.purchase_id "
+            "WHERE pi.product_id = ? AND pu.status = 'Invoice'",
+            (product_id,),
+        ).fetchone()[0]
 
 
 def get_product(product_id):
