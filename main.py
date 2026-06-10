@@ -66,6 +66,38 @@ class AutocompleteCombobox(ttk.Combobox):
             self.icursor(len(typed))
 
 
+def _sort_value(text):
+    """Sort key for a cell: numbers (after stripping £ , % etc.) sort numerically
+    and ahead of text; everything else sorts case-insensitively as a string."""
+    s = str(text).strip()
+    cleaned = s.lstrip("£$€").replace(",", "").rstrip("%").strip()
+    try:
+        return (0, float(cleaned), "")
+    except ValueError:
+        return (1, 0.0, s.lower())
+
+
+def make_sortable(tree):
+    """Make a Treeview's column headings click-to-sort, toggling asc/desc.
+    Sorts the currently displayed rows; a later refresh restores natural order.
+    Row iids are preserved (tree.move only reorders), so any code that maps an
+    iid to a list index keeps working. Applied to every table in the app."""
+    state = {"col": None, "reverse": False}
+
+    def sort_by(col):
+        reverse = not state["reverse"] if state["col"] == col else False
+        state["col"], state["reverse"] = col, reverse
+        rows = [(tree.set(iid, col), iid) for iid in tree.get_children("")]
+        rows.sort(key=lambda pair: _sort_value(pair[0]), reverse=reverse)
+        for index, (_, iid) in enumerate(rows):
+            tree.move(iid, "", index)
+
+    for col in tree["columns"]:
+        # Preserve the heading text already set; just attach the sort command.
+        tree.heading(col, text=tree.heading(col, "text"),
+                     command=lambda c=col: sort_by(c))
+
+
 class App(tk.Tk):
     """Main application window with a menu bar and swappable content views."""
 
@@ -334,6 +366,7 @@ class App(tk.Tk):
         for col, heading in zip(columns, headings):
             tree.heading(col, text=heading)
             tree.column(col, width=130)
+        make_sortable(tree)
         tree.pack(fill="both", expand=True)
 
         status_label = ttk.Label(self.container, text="")
@@ -542,15 +575,17 @@ class App(tk.Tk):
         def refresh_tree():
             text = search_term.get().strip()
             brand = brand_choice.get().strip()
-            # Don't show anything until the user applies a filter.
-            if not text and not brand:
+            in_stock = instock_choice.get().lower()
+            # Don't show anything until the user applies a filter. A stock filter
+            # of Yes/No counts as a filter; only "All" with no text/brand does not.
+            if not text and not brand and in_stock == "all":
                 tree.delete(*tree.get_children())
                 status_label.config(
-                    text="Enter a search term or choose a brand to see products."
+                    text="Enter a search term, choose a brand, or set an In stock filter."
                 )
                 return
             rows, total = product_db.query_products(
-                text=text, brand=brand, in_stock=instock_choice.get().lower(),
+                text=text, brand=brand, in_stock=in_stock,
                 limit=RESULT_LIMIT,
             )
             populate(rows, total)
@@ -604,6 +639,7 @@ class App(tk.Tk):
         for col, heading, width in zip(columns, headings, widths):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
+        make_sortable(tree)
 
         status_label = ttk.Label(self.container, text="")
         status_label.pack(anchor="w", pady=(8, 0))
@@ -777,6 +813,7 @@ class App(tk.Tk):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
         tree.column("total", anchor="e")
+        make_sortable(tree)
 
         status_label = ttk.Label(self.container, text="")
         status_label.pack(anchor="w", pady=(8, 0))
@@ -899,6 +936,7 @@ class App(tk.Tk):
         ]:
             lines_tree.heading(col, text=heading)
             lines_tree.column(col, width=width, anchor=anchor)
+        make_sortable(lines_tree)
         ls = ttk.Scrollbar(lt_frame, orient="vertical", command=lines_tree.yview)
         lines_tree.configure(yscrollcommand=ls.set)
         ls.pack(side="right", fill="y")
@@ -1077,14 +1115,19 @@ class App(tk.Tk):
         brand_combo.set_completion_list(product_db.get_brands())
         brand_combo.grid(row=0, column=3, padx=(6, 12))
         brand_combo.bind("<Return>", lambda e: do_search())
-        # Narrow the model list to the chosen brand (and size).
+        # Narrow the model list to the chosen brand (and size). Bind both the
+        # dropdown selection and typing (add="+" keeps the autocomplete handler).
         brand_combo.bind("<<ComboboxSelected>>", lambda e: refresh_models())
+        brand_combo.bind("<KeyRelease>", lambda e: refresh_models(), add="+")
 
         ttk.Label(search, text="Model:").grid(row=0, column=4, sticky="w")
         model_combo = AutocompleteCombobox(search, textvariable=model_var, width=18)
-        model_combo.set_completion_list(product_db.get_models())
+        # Disabled until a brand is chosen; refresh_models() enables it.
+        model_combo.configure(state="disabled")
         model_combo.grid(row=0, column=5, padx=(6, 12))
         model_combo.bind("<Return>", lambda e: do_search())
+        # Re-narrow the model list as the size (stock-code box) changes.
+        stock_entry.bind("<KeyRelease>", lambda e: refresh_models())
 
         ttk.Button(search, text="Search", command=lambda: do_search()).grid(row=0, column=6, padx=(0, 6))
         ttk.Button(search, text="Clear", command=lambda: clear()).grid(row=0, column=7)
@@ -1099,6 +1142,7 @@ class App(tk.Tk):
         ):
             results.heading(col, text=heading)
             results.column(col, width=width)
+        make_sortable(results)
         rsb = ttk.Scrollbar(res_frame, orient="vertical", command=results.yview)
         results.configure(yscrollcommand=rsb.set)
         rsb.pack(side="right", fill="y")
@@ -1124,6 +1168,7 @@ class App(tk.Tk):
         ]:
             basket_tree.heading(col, text=heading)
             basket_tree.column(col, width=width, anchor=anchor)
+        make_sortable(basket_tree)
         bsb = ttk.Scrollbar(bframe, orient="vertical", command=basket_tree.yview)
         basket_tree.configure(yscrollcommand=bsb.set)
         bsb.pack(side="right", fill="y")
@@ -1150,12 +1195,20 @@ class App(tk.Tk):
             return digits if len(digits) >= 3 else ""
 
         def refresh_models():
-            # Keep the model list to just this brand + size, so it stays manageable.
-            model_combo.set_completion_list(
-                product_db.get_models(
-                    brand=brand_var.get().strip(), size_prefix=size_prefix()
-                )
-            )
+            # Model picker stays disabled until a brand is chosen; once it is, the
+            # list is narrowed to that brand (and the size, if one's been typed).
+            brand = brand_var.get().strip()
+            if not brand:
+                model_var.set("")
+                model_combo.set_completion_list([])
+                model_combo.configure(state="disabled")
+                return
+            model_combo.configure(state="normal")
+            models = product_db.get_models(brand=brand, size_prefix=size_prefix())
+            model_combo.set_completion_list(models)
+            # Drop a stale model that the new brand/size no longer offers.
+            if model_var.get().strip() and model_var.get().strip() not in models:
+                model_var.set("")
 
         def on_stock_return():
             # Empty box + items already in the basket = submit; otherwise search.
@@ -1369,6 +1422,7 @@ class App(tk.Tk):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
         tree.column("amount", anchor="e")
+        make_sortable(tree)
 
         rows = payment_db.get_payments(supplier_id)
         for r in rows:
@@ -1556,6 +1610,7 @@ class App(tk.Tk):
             tree.column(col, width=width)
         tree.column("cost", anchor="e")
         tree.column("retail_price", anchor="e")
+        make_sortable(tree)
 
         status_label = ttk.Label(self.container, text="")
         status_label.pack(anchor="w", pady=(8, 0))
@@ -1711,6 +1766,7 @@ class App(tk.Tk):
         for col, heading in zip(columns, headings):
             tree.heading(col, text=heading)
             tree.column(col, width=140)
+        make_sortable(tree)
 
         status_label = ttk.Label(self.container, text="")
         status_label.pack(anchor="w", pady=(8, 0))
@@ -1895,6 +1951,7 @@ class App(tk.Tk):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
         tree.column("total", anchor="e")
+        make_sortable(tree)
 
         status_label = ttk.Label(self.container, text="")
         status_label.pack(anchor="w", pady=(8, 0))
@@ -2021,6 +2078,7 @@ class App(tk.Tk):
         ]:
             lines_tree.heading(col, text=heading)
             lines_tree.column(col, width=width, anchor=anchor)
+        make_sortable(lines_tree)
         ls = ttk.Scrollbar(lt_frame, orient="vertical", command=lines_tree.yview)
         lines_tree.configure(yscrollcommand=ls.set)
         ls.pack(side="right", fill="y")
@@ -2272,6 +2330,7 @@ class App(tk.Tk):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
         tree.column("amount", anchor="e")
+        make_sortable(tree)
 
         rows = receipt_db.get_receipts(customer_id)
         for r in rows:
