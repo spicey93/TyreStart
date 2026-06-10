@@ -11,6 +11,17 @@ from database import get_connection
 
 STATUSES = ("Order", "Invoice")
 
+# VAT: cost prices are stored NET; the rate (percent) is per line, default 20%.
+DEFAULT_VAT_RATE = 20.0
+VAT_RATES = (20.0, 5.0, 0.0)
+
+# SQL fragments for line money (use unqualified columns; add a `pi.` prefix in joins).
+_LINE_NET = "quantity * cost_price"
+_LINE_VAT = "quantity * cost_price * COALESCE(vat_rate, 20) / 100.0"
+_LINE_GROSS = "quantity * cost_price * (1 + COALESCE(vat_rate, 20) / 100.0)"
+# Gross expression for a subquery where purchase_items is aliased `pi`.
+_PI_GROSS = "pi.quantity * pi.cost_price * (1 + COALESCE(pi.vat_rate, 20) / 100.0)"
+
 
 def _now():
     return datetime.datetime.now().isoformat(timespec="seconds")
@@ -38,10 +49,17 @@ def create_table():
                 purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
                 product_id  INTEGER NOT NULL REFERENCES products(id),
                 quantity    INTEGER NOT NULL,
-                cost_price  REAL NOT NULL
+                cost_price  REAL NOT NULL,
+                vat_rate    REAL NOT NULL DEFAULT 20
             )
             """
         )
+        # Migrate purchase_items created before VAT existed.
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(purchase_items)")}
+        if "vat_rate" not in cols:
+            conn.execute(
+                "ALTER TABLE purchase_items ADD COLUMN vat_rate REAL NOT NULL DEFAULT 20"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase "
             "ON purchase_items(purchase_id)"
@@ -54,9 +72,13 @@ def create_table():
 
 def _insert_items(conn, purchase_id, items):
     conn.executemany(
-        "INSERT INTO purchase_items (purchase_id, product_id, quantity, cost_price) "
-        "VALUES (?, ?, ?, ?)",
-        [(purchase_id, it["product_id"], it["quantity"], it["cost_price"]) for it in items],
+        "INSERT INTO purchase_items (purchase_id, product_id, quantity, cost_price, vat_rate) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (purchase_id, it["product_id"], it["quantity"], it["cost_price"],
+             it.get("vat_rate", DEFAULT_VAT_RATE))
+            for it in items
+        ],
     )
 
 
@@ -107,7 +129,7 @@ def get_purchase_items(purchase_id):
     """Return the line items for a purchase, with product description/stock code."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT pi.id, pi.product_id, pi.quantity, pi.cost_price, "
+            "SELECT pi.id, pi.product_id, pi.quantity, pi.cost_price, pi.vat_rate, "
             "pr.description, pr.stock_code "
             "FROM purchase_items pi JOIN products pr ON pr.id = pi.product_id "
             "WHERE pi.purchase_id = ? ORDER BY pi.id",
@@ -116,13 +138,26 @@ def get_purchase_items(purchase_id):
 
 
 def purchase_total(purchase_id):
-    """Total value of a purchase (sum of quantity * cost_price)."""
+    """Gross total of a purchase (net + VAT)."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT COALESCE(SUM(quantity * cost_price), 0) FROM purchase_items "
+            f"SELECT COALESCE(SUM({_LINE_GROSS}), 0) FROM purchase_items "
             "WHERE purchase_id = ?",
             (purchase_id,),
         ).fetchone()[0]
+
+
+def purchase_totals(purchase_id):
+    """Return {'net', 'vat', 'gross'} for a purchase."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT COALESCE(SUM({_LINE_NET}), 0) AS net, "
+            f"COALESCE(SUM({_LINE_VAT}), 0) AS vat, "
+            f"COALESCE(SUM({_LINE_GROSS}), 0) AS gross "
+            "FROM purchase_items WHERE purchase_id = ?",
+            (purchase_id,),
+        ).fetchone()
+        return {"net": row["net"], "vat": row["vat"], "gross": row["gross"]}
 
 
 def list_purchases(text="", status=""):
@@ -136,7 +171,7 @@ def list_purchases(text="", status=""):
         return conn.execute(
             "SELECT pu.id, pu.reference, pu.status, pu.date, pu.supplier_id, "
             "s.name AS supplier_name, "
-            "COALESCE((SELECT SUM(pi.quantity * pi.cost_price) FROM purchase_items pi "
+            f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
             "          WHERE pi.purchase_id = pu.id), 0) AS total "
             "FROM purchases pu JOIN suppliers s ON s.id = pu.supplier_id "
             "WHERE (pu.reference LIKE ? COLLATE NOCASE OR s.name LIKE ? COLLATE NOCASE) "
@@ -154,7 +189,7 @@ def supplier_invoices(supplier_id, outstanding_only=False):
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT pu.id, pu.reference, pu.date, "
-            "COALESCE((SELECT SUM(pi.quantity * pi.cost_price) FROM purchase_items pi "
+            f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
             "          WHERE pi.purchase_id = pu.id), 0) AS total, "
             "COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa "
             "          WHERE pa.purchase_id = pu.id), 0) AS allocated "

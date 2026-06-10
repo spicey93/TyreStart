@@ -29,9 +29,11 @@ def init_db():
     import nominals
     import purchases
     import payments
+    import services
 
     suppliers.create_table()
     products.create_table()
     nominals.create_table()
     purchases.create_table()
     payments.create_table()
+    services.create_table()

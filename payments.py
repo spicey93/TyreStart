@@ -92,7 +92,8 @@ def supplier_balance(supplier_id):
     """Supplier balance = sum of invoice totals - sum of payments."""
     with get_connection() as conn:
         invoiced = conn.execute(
-            "SELECT COALESCE(SUM(pi.quantity * pi.cost_price), 0) "
+            "SELECT COALESCE(SUM(pi.quantity * pi.cost_price * "
+            "(1 + COALESCE(pi.vat_rate, 20) / 100.0)), 0) "
             "FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id "
             "WHERE pu.supplier_id = ? AND pu.status = 'Invoice'",
             (supplier_id,),

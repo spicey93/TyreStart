@@ -174,12 +174,22 @@ def get_brands():
         return [row["brand"] for row in rows]
 
 
-def get_models():
-    """Return the distinct non-empty model names, sorted case-insensitively."""
+def get_models(brand="", size_prefix=""):
+    """Distinct non-empty models, optionally narrowed by brand and/or a stock-code
+    size prefix (e.g. '2055516'). Keeps the model picker a manageable size."""
+    clauses = ["model <> ''"]
+    params = []
+    if brand:
+        clauses.append("brand = ? COLLATE NOCASE")
+        params.append(brand)
+    if size_prefix:
+        clauses.append("stock_code LIKE ?")
+        params.append(size_prefix + "%")
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT model FROM products WHERE model <> '' "
-            "ORDER BY model COLLATE NOCASE"
+            f"SELECT DISTINCT model FROM products WHERE {' AND '.join(clauses)} "
+            "ORDER BY model COLLATE NOCASE",
+            params,
         ).fetchall()
         return [row["model"] for row in rows]
 
@@ -206,18 +216,20 @@ def create_product(description, brand="", model="", ean="", manufacturer_code=""
 
 
 # Current stock = sum of quantities from INVOICED purchase lines (orders don't count).
-STOCK_SUBQUERY = (
+STOCK_EXPR = (
     "COALESCE((SELECT SUM(pi.quantity) FROM purchase_items pi "
     "JOIN purchases pu ON pu.id = pi.purchase_id "
-    "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0) AS stock"
+    "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0)"
 )
+STOCK_SUBQUERY = STOCK_EXPR + " AS stock"
 
 
-def query_products(text="", brand="", limit=200):
-    """Filter products by free text and/or an exact brand.
+def query_products(text="", brand="", in_stock="all", limit=200):
+    """Filter products by free text, brand and/or stock status.
 
     `text` matches the description OR the stock code (case-insensitive).
     `brand` (when given) restricts to that exact brand.
+    `in_stock`: 'yes' = only stocked, 'no' = only out of stock, 'all' = no filter.
     Each row includes a `stock` column (invoiced quantity).
     Returns (rows, total_matches) so the UI can report how many were capped.
     """
@@ -231,6 +243,10 @@ def query_products(text="", brand="", limit=200):
     if brand:
         clauses.append("brand = ? COLLATE NOCASE")
         params.append(brand)
+    if in_stock == "yes":
+        clauses.append(f"{STOCK_EXPR} > 0")
+    elif in_stock == "no":
+        clauses.append(f"{STOCK_EXPR} = 0")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
     with get_connection() as conn:
@@ -245,13 +261,25 @@ def query_products(text="", brand="", limit=200):
         return rows, total
 
 
+# A size+speed shorthand like "2055516V" = size 205/55R16, speed rating V.
+SIZE_SPEED_RE = re.compile(r"^(\d{7})([A-Za-z]+)$")
+
+
 def search_products_adv(stock_code="", brand="", model="", limit=200):
-    """Search by stock code (contains) and/or exact brand/model. For the
-    Product Allocation window. Returns (rows, total_matches)."""
+    """Search by stock code and/or exact brand/model, for the Product Allocation
+    window. The stock-code box also accepts a size+speed shorthand such as
+    "2055516V" (size 205/55R16 + speed rating V). Returns (rows, total_matches)."""
     clauses, params = [], []
-    if stock_code:
+    speed = ""
+    code = stock_code.strip()
+    match = SIZE_SPEED_RE.match(code)
+    if match:  # e.g. 2055516V -> size prefix on stock_code + speed in description
+        clauses.append("stock_code LIKE ?")
+        params.append(match.group(1) + "%")
+        speed = match.group(2).upper()
+    elif code:
         clauses.append("stock_code LIKE ? COLLATE NOCASE")
-        params.append(f"%{stock_code}%")
+        params.append(f"%{code}%")
     if brand:
         clauses.append("brand = ? COLLATE NOCASE")
         params.append(brand)
@@ -259,7 +287,18 @@ def search_products_adv(stock_code="", brand="", model="", limit=200):
         clauses.append("model = ? COLLATE NOCASE")
         params.append(model)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
     with get_connection() as conn:
+        if speed:
+            # Speed rating sits in the description after the load index (e.g. "91V");
+            # filter those rows in Python. The size clause already narrows it a lot.
+            rows = conn.execute(
+                f"SELECT * FROM products{where} ORDER BY description COLLATE NOCASE",
+                params,
+            ).fetchall()
+            pattern = re.compile(r"\d\s*" + re.escape(speed) + r"\b", re.IGNORECASE)
+            rows = [r for r in rows if pattern.search(r["description"] or "")]
+            return rows[:limit], len(rows)
         total = conn.execute(
             f"SELECT COUNT(*) FROM products{where}", params
         ).fetchone()[0]

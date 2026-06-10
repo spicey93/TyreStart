@@ -26,13 +26,22 @@ add it here.
   path and the shared `get_connection()`; `database.init_db()` creates all tables at
   startup.
 - **One data-access module per entity** (`suppliers.py`, `products.py`, `purchases.py`,
-  `payments.py`, `nominals.py`). Each imports `get_connection` from `database.py`,
+  `payments.py`, `nominals.py`, `services.py`). Each imports `get_connection` from `database.py`,
   exposes a `create_table()`, and keeps **all of that entity's SQL**. The UI calls
   functions like `db.get_all_suppliers()` and never writes SQL inline. The data layer
   raises domain errors (e.g. `DuplicateNameError`) instead of leaking `sqlite3` errors.
 - **Foreign keys are ON** (`get_connection()` sets `PRAGMA foreign_keys = ON`). Money is
-  stored as `REAL` and formatted to 2dp on display (`f"{x:,.2f}"`); dates as ISO text
-  (`datetime.date.today().isoformat()`), defaulted to today on new records.
+  stored as `REAL` and formatted to 2dp on display (`f"{x:,.2f}"`); dates as `DD/MM/YY`
+  text, defaulted to today on new records.
+- **VAT**: cost prices are stored **net**; each purchase line carries a `vat_rate`
+  (percent, default 20). Line gross = `qty*cost*(1+rate/100)`. Totals are reported as
+  **Net / VAT / Gross**; supplier balances and invoice outstanding use **gross** (what you
+  owe). Standard rates live in `purchases.VAT_RATES` (20/5/0); the UI labels them in
+  `VAT_RATE_OPTIONS`.
+- **Never run blanket `DELETE`/`DROP` against `app.db` for tests or cleanup.** Verify the
+  data layer against a throwaway DB (`database.DB_PATH = Path('._tmp.db')` *before*
+  `init_db()`), or create rows and delete only the ids you created. UI build harnesses
+  must be read-only.
 - **Derived totals/balances are computed in SQL, never stored**: a purchase total is
   `SUM(qty*cost)` over its lines; product stock is `SUM(qty)` over *invoiced* lines; a
   supplier balance is `Σ invoices − Σ payments`. Keep these as functions in the owning
@@ -42,9 +51,17 @@ add it here.
   idempotent. Map source columns explicitly (skip junk/constant columns).
 
 ## Navigation & menu bar
-- Flat top-level menu commands (no nested cascades unless a group grows large).
-- **Show the keyboard shortcut in the label**, in brackets: `Home [F1]`, `Suppliers [F2]`.
-  (Top-level menubar items don't render `accelerator=`, so put it in the text.)
+- `Home` is a flat command (`Home [F1]` — top-level items don't render `accelerator=`,
+  so the shortcut goes in the label text).
+- Each **section is a dropdown cascade** with an `All <X>` and a `New <X>` item
+  (Suppliers / Products / Purchases). Put the F-key in the cascade label
+  (`Suppliers [F2]`).
+- **F-keys open (post) the matching dropdown** rather than jumping straight to a view:
+  `_post_section_menu(menu, x_offset)` calls `menu.tk_popup(...)` (cascades are stored on
+  `self`). The posted native menu is then driven with **arrow keys + Enter** — one
+  consistent keyboard path to both `All <X>` and `New <X>`. No per-item accelerators, and
+  no separate `Ctrl+N`.
+- **No "+ New" buttons in page headers** — creation lives in the menu dropdown.
 
 ## Page header pattern
 Every list/detail screen starts with a header row: **title on the left, primary action
@@ -106,6 +123,24 @@ For a record that owns a list of sub-rows (e.g. a Purchase with product lines):
   `AutocompleteCombobox` (or readonly `Combobox`) keyed by a display label → map the label
   back to the row id on save.
 - **Huge table** (products, 80k+): never a combobox — use a search box + capped results.
+- **Dependent dropdowns**: narrow a large option list by its parents to keep it usable —
+  e.g. the model picker is scoped to the chosen brand + size (`get_models(brand, size)`),
+  refreshed when the brand changes or a search runs.
+
+## Search shorthands & filters
+- Products support a **size+speed stock-code shorthand**: `2055516V` = size 205/55R16
+  (matched as a `stock_code` prefix) + speed rating `V` (matched in the description). See
+  `products.search_products_adv` / `SIZE_SPEED_RE`.
+- Lists that track stock offer an **In stock** filter (`Yes`/`No`/`All`, default `Yes`)
+  via `query_products(in_stock=...)`.
+
+## Inline cell editing & fast entry
+- **Double-click a Treeview cell to edit it** (e.g. Qty/Cost on purchase lines): overlay
+  a `ttk.Entry` at `tree.bbox(rowid, column)`, commit on `<Return>`/`<FocusOut>`, cancel
+  on `<Escape>`, then rebuild the row. Restrict to the editable columns by `identify_column`.
+- **Rapid repeat entry** (Product Allocation): after adding to the basket, clear the search
+  inputs and refocus the search box; pressing **Enter on an empty search with a non-empty
+  basket submits** — so a whole basket can be built without the mouse.
 
 ## Account / balance section
 A record that has money movements (a supplier) shows an **Account** `ttk.LabelFrame` on
@@ -142,5 +177,8 @@ sum of allocations (shown live via `StringVar.trace_add`).
   rather than failing silently.
 
 ## Naming & wording
-- Buttons: `+ New Supplier`, `Search`, `Clear`, `Edit`, `Delete`, `Save`.
-- Uniqueness checks are **case-insensitive** (e.g. supplier name).
+- Buttons: `Search`, `Clear`, `Edit`, `Delete`, `Save`.
+- Uniqueness checks are **case-insensitive** (e.g. supplier name, service code) via a
+  `UNIQUE INDEX ... COLLATE NOCASE` + a domain error (`DuplicateNameError` /
+  `DuplicateCodeError`) caught in the form. For an optional unique field, store blanks as
+  `NULL` so multiple un-coded rows don't clash (SQLite treats NULLs as distinct).

@@ -8,6 +8,10 @@ import products as product_db
 import purchases as purchase_db
 import payments as payment_db
 import nominals
+import services as service_db
+
+# VAT rate options for the line dialog: (label shown, rate percent).
+VAT_RATE_OPTIONS = [("20% (Standard)", 20.0), ("5% (Reduced)", 5.0), ("0% (Zero)", 0.0)]
 
 
 class AutocompleteCombobox(ttk.Combobox):
@@ -78,11 +82,12 @@ class App(tk.Tk):
 
         # Keyboard shortcuts for the main views.
         self.current_view = None
+        # F-keys open the matching menu dropdown; navigate it with arrows + Enter.
         self.bind_all("<F1>", lambda e: self.show_home())
-        self.bind_all("<F2>", lambda e: self.show_all_suppliers())
-        self.bind_all("<F3>", lambda e: self.show_products())
-        self.bind_all("<F4>", lambda e: self.show_purchases())
-        self.bind_all("<Control-n>", lambda e: self._new_for_current_view())
+        self.bind_all("<F2>", lambda e: self._post_section_menu(self._suppliers_menu, 60))
+        self.bind_all("<F3>", lambda e: self._post_section_menu(self._products_menu, 150))
+        self.bind_all("<F4>", lambda e: self._post_section_menu(self._purchases_menu, 245))
+        self.bind_all("<F5>", lambda e: self._post_section_menu(self._services_menu, 340))
 
         # Container that holds whichever view is currently shown.
         self.container = ttk.Frame(self, padding=20)
@@ -94,9 +99,27 @@ class App(tk.Tk):
         menubar = tk.Menu(self)
 
         menubar.add_command(label="Home [F1]", command=self.show_home)
-        menubar.add_command(label="Suppliers [F2]", command=self.show_all_suppliers)
-        menubar.add_command(label="Products [F3]", command=self.show_products)
-        menubar.add_command(label="Purchases [F4]", command=self.show_purchases)
+
+        # Cascades are stored on self so the F-keys can post them for keyboard use.
+        self._suppliers_menu = tk.Menu(menubar, tearoff=0)
+        self._suppliers_menu.add_command(label="All Suppliers", command=self.show_all_suppliers)
+        self._suppliers_menu.add_command(label="New Supplier", command=self.show_create_supplier)
+        menubar.add_cascade(label="Suppliers [F2]", menu=self._suppliers_menu)
+
+        self._products_menu = tk.Menu(menubar, tearoff=0)
+        self._products_menu.add_command(label="All Products", command=self.show_products)
+        self._products_menu.add_command(label="New Product", command=self.show_product_form)
+        menubar.add_cascade(label="Products [F3]", menu=self._products_menu)
+
+        self._purchases_menu = tk.Menu(menubar, tearoff=0)
+        self._purchases_menu.add_command(label="All Purchases", command=self.show_purchases)
+        self._purchases_menu.add_command(label="New Purchase", command=self.show_purchase_form)
+        menubar.add_cascade(label="Purchases [F4]", menu=self._purchases_menu)
+
+        self._services_menu = tk.Menu(menubar, tearoff=0)
+        self._services_menu.add_command(label="All Services", command=self.show_services)
+        self._services_menu.add_command(label="New Service", command=self.show_service_form)
+        menubar.add_cascade(label="Services [F5]", menu=self._services_menu)
 
         self.config(menu=menubar)
 
@@ -104,14 +127,12 @@ class App(tk.Tk):
         for widget in self.container.winfo_children():
             widget.destroy()
 
-    def _new_for_current_view(self):
-        """Ctrl+N: create a new record appropriate to the current list view."""
-        if self.current_view == "suppliers":
-            self.show_create_supplier()
-        elif self.current_view == "products":
-            self.show_product_form()
-        elif self.current_view == "purchases":
-            self.show_purchase_form()
+    def _post_section_menu(self, menu, x_offset):
+        """Open a menubar dropdown so it can be driven with arrow keys + Enter."""
+        try:
+            menu.tk_popup(self.winfo_rootx() + x_offset, self.winfo_rooty() + 2)
+        finally:
+            menu.grab_release()
 
     def show_home(self):
         self.current_view = "home"
@@ -137,11 +158,6 @@ class App(tk.Tk):
             text="Suppliers",
             font=("Segoe UI", 20, "bold"),
         ).pack(side="left")
-        ttk.Button(
-            header,
-            text="+ New Supplier",
-            command=self.show_create_supplier,
-        ).pack(side="right")
 
         field_map = {
             "Name": "name",
@@ -370,9 +386,6 @@ class App(tk.Tk):
             text="Products",
             font=("Segoe UI", 20, "bold"),
         ).pack(side="left")
-        ttk.Button(
-            header, text="+ New Product", command=self.show_product_form
-        ).pack(side="right")
 
         brands = product_db.get_brands()
 
@@ -382,6 +395,7 @@ class App(tk.Tk):
 
         search_term = tk.StringVar()
         brand_choice = tk.StringVar()
+        instock_choice = tk.StringVar(value="Yes")
 
         ttk.Label(search_frame, text="Search:").grid(row=0, column=0, sticky="w")
         search_entry = ttk.Entry(search_frame, textvariable=search_term)
@@ -401,6 +415,17 @@ class App(tk.Tk):
         # An empty brand box means "all brands".
         brand_combo.bind("<<ComboboxSelected>>", lambda e: refresh_tree())
         brand_combo.bind("<Return>", lambda e: do_search())
+
+        ttk.Label(search_frame, text="In stock:").grid(row=0, column=4, sticky="w")
+        instock_combo = ttk.Combobox(
+            search_frame, state="readonly", width=6, textvariable=instock_choice,
+            values=["Yes", "No", "All"],
+        )
+        instock_combo.grid(row=0, column=5, sticky="w", padx=(8, 10))
+        instock_combo.current(0)
+        instock_combo.bind("<<ComboboxSelected>>", lambda e: refresh_tree())
+
+        SEARCH_BTN_COL, CLEAR_BTN_COL = 6, 7
 
         def populate(rows, total):
             tree.delete(*tree.get_children())
@@ -436,13 +461,18 @@ class App(tk.Tk):
                     text="Enter a search term or choose a brand to see products."
                 )
                 return
-            rows, total = product_db.query_products(text=text, brand=brand, limit=RESULT_LIMIT)
+            rows, total = product_db.query_products(
+                text=text, brand=brand, in_stock=instock_choice.get().lower(),
+                limit=RESULT_LIMIT,
+            )
             populate(rows, total)
 
         def clear_search():
             search_term.set("")
             brand_choice.set("")
             brand_combo["values"] = brands
+            instock_choice.set("Yes")
+            instock_combo.current(0)
             refresh_tree()
             search_entry.focus_set()
 
@@ -458,9 +488,11 @@ class App(tk.Tk):
                 tree.see(first)
 
         ttk.Button(search_frame, text="Search", command=do_search).grid(
-            row=0, column=4, padx=(0, 8)
+            row=0, column=SEARCH_BTN_COL, padx=(0, 8)
         )
-        ttk.Button(search_frame, text="Clear", command=clear_search).grid(row=0, column=5)
+        ttk.Button(search_frame, text="Clear", command=clear_search).grid(
+            row=0, column=CLEAR_BTN_COL
+        )
 
         columns = (
             "stock_code", "description", "brand", "stock", "rolling_resistance",
@@ -618,9 +650,6 @@ class App(tk.Tk):
         ttk.Label(
             header, text="Purchases", font=("Segoe UI", 20, "bold")
         ).pack(side="left")
-        ttk.Button(
-            header, text="+ New Purchase", command=lambda: self.show_purchase_form()
-        ).pack(side="right")
 
         bar = ttk.Frame(self.container)
         bar.pack(fill="x", pady=(0, 10))
@@ -761,12 +790,13 @@ class App(tk.Tk):
         lt_frame = ttk.Frame(self.container)
         lt_frame.pack(fill="both", expand=True, pady=(8, 0))
         lines_tree = ttk.Treeview(
-            lt_frame, columns=("product", "qty", "cost", "total"),
+            lt_frame, columns=("product", "qty", "cost", "vat", "total"),
             show="headings", height=6,
         )
         for col, heading, width, anchor in [
-            ("product", "Product", 340, "w"), ("qty", "Qty", 60, "e"),
-            ("cost", "Cost", 90, "e"), ("total", "Line Total", 100, "e"),
+            ("product", "Product", 300, "w"), ("qty", "Qty", 50, "e"),
+            ("cost", "Cost", 90, "e"), ("vat", "VAT", 60, "e"),
+            ("total", "Line Total", 100, "e"),
         ]:
             lines_tree.heading(col, text=heading)
             lines_tree.column(col, width=width, anchor=anchor)
@@ -778,7 +808,9 @@ class App(tk.Tk):
         bottom = ttk.Frame(self.container)
         bottom.pack(fill="x", pady=(6, 0))
         ttk.Button(bottom, text="Remove line", command=lambda: remove_line()).pack(side="left")
-        total_label = ttk.Label(bottom, text="Total: 0.00", font=("Segoe UI", 10, "bold"))
+        total_label = ttk.Label(
+            bottom, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
+        )
         total_label.pack(side="right")
 
         def remove_line():
@@ -790,16 +822,66 @@ class App(tk.Tk):
 
         def refresh_lines():
             lines_tree.delete(*lines_tree.get_children())
-            total = 0.0
+            net_total = vat_total = gross_total = 0.0
             for index, ln in enumerate(lines):
-                line_total = ln["quantity"] * ln["cost_price"]
-                total += line_total
+                net = ln["quantity"] * ln["cost_price"]
+                vat = net * ln["vat_rate"] / 100.0
+                gross = net + vat
+                net_total += net
+                vat_total += vat
+                gross_total += gross
                 lines_tree.insert(
                     "", "end", iid=str(index),
                     values=(ln["label"], ln["quantity"], f"{ln['cost_price']:.2f}",
-                            f"{line_total:,.2f}"),
+                            f"{ln['vat_rate']:.0f}%", f"{gross:,.2f}"),
                 )
-            total_label.config(text=f"Total: {total:,.2f}")
+            total_label.config(
+                text=f"Net {net_total:,.2f}   VAT {vat_total:,.2f}   Gross {gross_total:,.2f}"
+            )
+
+        def edit_cell(event):
+            """Double-click the Qty or Cost cell to edit it inline."""
+            if lines_tree.identify("region", event.x, event.y) != "cell":
+                return
+            column = lines_tree.identify_column(event.x)  # '#1'..'#5'
+            rowid = lines_tree.identify_row(event.y)
+            if not rowid or column not in ("#2", "#3"):  # only Qty (#2) / Cost (#3)
+                return
+            key = "quantity" if column == "#2" else "cost_price"
+            index = int(rowid)
+            bbox = lines_tree.bbox(rowid, column)
+            if not bbox:
+                return
+            x, y, w, h = bbox
+            editor = ttk.Entry(lines_tree)
+            editor.place(x=x, y=y, width=w, height=h)
+            editor.insert(0, str(lines[index][key]))
+            editor.select_range(0, "end")
+            editor.focus_set()
+
+            def commit(_=None):
+                raw = editor.get().strip()
+                try:
+                    if key == "quantity":
+                        value = int(raw)
+                        if value <= 0:
+                            raise ValueError
+                    else:
+                        value = float(raw)
+                        if value < 0:
+                            raise ValueError
+                except ValueError:
+                    editor.destroy()
+                    return
+                lines[index][key] = value
+                editor.destroy()
+                refresh_lines()
+
+            editor.bind("<Return>", commit)
+            editor.bind("<FocusOut>", commit)
+            editor.bind("<Escape>", lambda e: editor.destroy())
+
+        lines_tree.bind("<Double-1>", edit_cell)
 
         def save():
             supplier_name = supplier_var.get().strip()
@@ -817,7 +899,7 @@ class App(tk.Tk):
                 return
             items = [
                 {"product_id": ln["product_id"], "quantity": ln["quantity"],
-                 "cost_price": ln["cost_price"]}
+                 "cost_price": ln["cost_price"], "vat_rate": ln["vat_rate"]}
                 for ln in lines
             ]
             args = (supplier_id, status_var.get(), reference_var.get().strip(),
@@ -859,6 +941,7 @@ class App(tk.Tk):
                     "label": f"{it['stock_code']} — {it['description']}",
                     "quantity": it["quantity"],
                     "cost_price": it["cost_price"],
+                    "vat_rate": it["vat_rate"],
                 })
             refresh_lines()
 
@@ -886,13 +969,16 @@ class App(tk.Tk):
         ttk.Label(search, text="Stock Code:").grid(row=0, column=0, sticky="w")
         stock_entry = ttk.Entry(search, textvariable=stock_var, width=20)
         stock_entry.grid(row=0, column=1, padx=(6, 12))
-        stock_entry.bind("<Return>", lambda e: do_search())
+        # Enter searches; if the box is empty and the basket has items, it submits.
+        stock_entry.bind("<Return>", lambda e: on_stock_return())
 
         ttk.Label(search, text="Brand:").grid(row=0, column=2, sticky="w")
         brand_combo = AutocompleteCombobox(search, textvariable=brand_var, width=18)
         brand_combo.set_completion_list(product_db.get_brands())
         brand_combo.grid(row=0, column=3, padx=(6, 12))
         brand_combo.bind("<Return>", lambda e: do_search())
+        # Narrow the model list to the chosen brand (and size).
+        brand_combo.bind("<<ComboboxSelected>>", lambda e: refresh_models())
 
         ttk.Label(search, text="Model:").grid(row=0, column=4, sticky="w")
         model_combo = AutocompleteCombobox(search, textvariable=model_var, width=18)
@@ -928,11 +1014,13 @@ class App(tk.Tk):
         bframe = ttk.Frame(win, padding=(10, 0))
         bframe.pack(fill="both", expand=True)
         basket_tree = ttk.Treeview(
-            bframe, columns=("product", "qty", "cost", "total"), show="headings", height=5
+            bframe, columns=("product", "qty", "cost", "vat", "total"),
+            show="headings", height=5,
         )
         for col, heading, width, anchor in [
-            ("product", "Product", 340, "w"), ("qty", "Qty", 60, "e"),
-            ("cost", "Unit Cost", 90, "e"), ("total", "Line Total", 100, "e"),
+            ("product", "Product", 300, "w"), ("qty", "Qty", 50, "e"),
+            ("cost", "Unit Cost", 90, "e"), ("vat", "VAT", 60, "e"),
+            ("total", "Line Total", 100, "e"),
         ]:
             basket_tree.heading(col, text=heading)
             basket_tree.column(col, width=width, anchor=anchor)
@@ -944,12 +1032,40 @@ class App(tk.Tk):
         foot = ttk.Frame(win, padding=10)
         foot.pack(fill="x")
         ttk.Button(foot, text="Remove", command=lambda: remove_basket()).pack(side="left")
-        total_lbl = ttk.Label(foot, text="Total: 0.00", font=("Segoe UI", 10, "bold"))
+        total_lbl = ttk.Label(
+            foot, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
+        )
         total_lbl.pack(side="left", padx=(12, 0))
         ttk.Button(foot, text="Submit to Purchase", command=lambda: submit()).pack(side="right")
         ttk.Button(foot, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 8))
 
+        def size_prefix():
+            # Leading digits of the stock-code box, e.g. "2055516V" -> "2055516".
+            digits = ""
+            for ch in stock_var.get().strip():
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            return digits if len(digits) >= 3 else ""
+
+        def refresh_models():
+            # Keep the model list to just this brand + size, so it stays manageable.
+            model_combo.set_completion_list(
+                product_db.get_models(
+                    brand=brand_var.get().strip(), size_prefix=size_prefix()
+                )
+            )
+
+        def on_stock_return():
+            # Empty box + items already in the basket = submit; otherwise search.
+            if not stock_var.get().strip() and basket:
+                submit()
+            else:
+                do_search()
+
         def do_search():
+            refresh_models()
             results.delete(*results.get_children())
             result_map.clear()
             rows, total = product_db.search_products_adv(
@@ -982,6 +1098,7 @@ class App(tk.Tk):
             model_var.set("")
             results.delete(*results.get_children())
             result_map.clear()
+            refresh_models()
             res_status.config(text="Search by stock code, brand or model.")
             stock_entry.focus_set()
 
@@ -996,13 +1113,14 @@ class App(tk.Tk):
             qc = self.ask_quantity_cost(win, label)
             if qc is None:
                 return
-            quantity, cost = qc
+            quantity, cost, vat_rate = qc
             basket.append({
                 "product_id": product["id"], "label": label,
-                "quantity": quantity, "cost_price": cost,
+                "quantity": quantity, "cost_price": cost, "vat_rate": vat_rate,
             })
             refresh_basket()
-            results.focus_set()  # return focus for further arrow-key navigation
+            # Ready for the next product: clear the search and focus the stock box.
+            clear()
 
         results.bind("<Return>", lambda e: add_selected())
         results.bind("<Double-1>", lambda e: add_selected())
@@ -1016,16 +1134,22 @@ class App(tk.Tk):
 
         def refresh_basket():
             basket_tree.delete(*basket_tree.get_children())
-            total = 0.0
+            net_total = vat_total = gross_total = 0.0
             for index, it in enumerate(basket):
-                line_total = it["quantity"] * it["cost_price"]
-                total += line_total
+                net = it["quantity"] * it["cost_price"]
+                vat = net * it["vat_rate"] / 100.0
+                gross = net + vat
+                net_total += net
+                vat_total += vat
+                gross_total += gross
                 basket_tree.insert(
                     "", "end", iid=str(index),
                     values=(it["label"], it["quantity"], f"{it['cost_price']:.2f}",
-                            f"{line_total:,.2f}"),
+                            f"{it['vat_rate']:.0f}%", f"{gross:,.2f}"),
                 )
-            total_lbl.config(text=f"Total: {total:,.2f}")
+            total_lbl.config(
+                text=f"Net {net_total:,.2f}   VAT {vat_total:,.2f}   Gross {gross_total:,.2f}"
+            )
 
         def submit():
             if not basket:
@@ -1037,7 +1161,7 @@ class App(tk.Tk):
         stock_entry.focus_set()
 
     def ask_quantity_cost(self, parent, product_label):
-        """Modal dialog returning (quantity, unit_cost) or None if cancelled."""
+        """Modal dialog returning (quantity, net_unit_cost, vat_rate) or None."""
         dialog = tk.Toplevel(parent)
         dialog.title("Quantity & Unit Cost")
         dialog.transient(parent)
@@ -1049,11 +1173,38 @@ class App(tk.Tk):
         form.pack(anchor="w")
         qty_var = tk.StringVar()
         cost_var = tk.StringVar()
+        vat_var = tk.StringVar(value=VAT_RATE_OPTIONS[0][0])
+
         ttk.Label(form, text="Quantity:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
-        qty_entry = ttk.Entry(form, textvariable=qty_var, width=12)
+        qty_entry = ttk.Entry(form, textvariable=qty_var, width=14)
         qty_entry.grid(row=0, column=1, pady=4)
-        ttk.Label(form, text="Unit Cost:").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
-        ttk.Entry(form, textvariable=cost_var, width=12).grid(row=1, column=1, pady=4)
+        ttk.Label(form, text="Unit Cost (net):").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(form, textvariable=cost_var, width=14).grid(row=1, column=1, pady=4)
+        ttk.Label(form, text="VAT:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        vat_combo = ttk.Combobox(
+            form, state="readonly", width=14, textvariable=vat_var,
+            values=[label for label, _ in VAT_RATE_OPTIONS],
+        )
+        vat_combo.grid(row=2, column=1, pady=4)
+        vat_combo.current(0)
+
+        gross_label = ttk.Label(form, text="")
+        gross_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        rate_by_label = dict(VAT_RATE_OPTIONS)
+
+        def preview(*_):
+            try:
+                gross = int(qty_var.get()) * float(cost_var.get()) * (
+                    1 + rate_by_label[vat_var.get()] / 100.0
+                )
+                gross_label.config(text=f"Line total (inc VAT): {gross:,.2f}")
+            except (ValueError, KeyError):
+                gross_label.config(text="")
+
+        qty_var.trace_add("write", preview)
+        cost_var.trace_add("write", preview)
+        vat_combo.bind("<<ComboboxSelected>>", preview)
 
         def ok():
             try:
@@ -1068,7 +1219,7 @@ class App(tk.Tk):
             if quantity <= 0:
                 messagebox.showwarning("Invalid", "Quantity must be greater than zero.", parent=dialog)
                 return
-            result["value"] = (quantity, cost)
+            result["value"] = (quantity, cost, rate_by_label[vat_var.get()])
             dialog.destroy()
 
         btns = ttk.Frame(dialog, padding=10)
@@ -1265,6 +1416,166 @@ class App(tk.Tk):
         ttk.Button(
             btns, text="Cancel", command=lambda: self.show_payments(supplier_id)
         ).pack(side="left", padx=(8, 0))
+
+    # ------------------------------------------------------------------- Services
+
+    def show_services(self):
+        self.current_view = "services"
+        self._clear_container()
+
+        header = ttk.Frame(self.container)
+        header.pack(fill="x", pady=(0, 10))
+        ttk.Label(
+            header, text="Services", font=("Segoe UI", 20, "bold")
+        ).pack(side="left")
+
+        bar = ttk.Frame(self.container)
+        bar.pack(fill="x", pady=(0, 10))
+        bar.columnconfigure(1, weight=1)
+        search_term = tk.StringVar()
+        ttk.Label(bar, text="Search:").grid(row=0, column=0, sticky="w")
+        search_entry = ttk.Entry(bar, textvariable=search_term)
+        search_entry.grid(row=0, column=1, sticky="ew", padx=(8, 10))
+        search_entry.focus_set()
+        search_entry.bind("<Return>", lambda e: do_search())
+        ttk.Button(bar, text="Search", command=lambda: do_search()).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(bar, text="Clear", command=lambda: clear()).grid(row=0, column=3)
+
+        columns = ("service_code", "service_name", "cost", "retail_price")
+        headings = ("Service Code", "Service Name", "Cost", "Retail Price")
+        widths = (160, 300, 110, 110)
+        table_frame = ttk.Frame(self.container)
+        table_frame.pack(fill="both", expand=True)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        tree.column("cost", anchor="e")
+        tree.column("retail_price", anchor="e")
+
+        status_label = ttk.Label(self.container, text="")
+        status_label.pack(anchor="w", pady=(8, 0))
+
+        def refresh():
+            rows = service_db.list_services(text=search_term.get().strip())
+            tree.delete(*tree.get_children())
+            for r in rows:
+                tree.insert(
+                    "", "end", iid=str(r["id"]),
+                    values=(
+                        r["service_code"] or "", r["service_name"],
+                        f"{(r['cost'] or 0):,.2f}", f"{(r['retail_price'] or 0):,.2f}",
+                    ),
+                )
+            status_label.config(
+                text=f"{len(rows)} service(s)." if rows
+                else "No services yet. Use Services → New Service to add one."
+            )
+
+        def clear():
+            search_term.set("")
+            refresh()
+            search_entry.focus_set()
+
+        def do_search():
+            refresh()
+            children = tree.get_children()
+            if children:
+                first = children[0]
+                tree.focus_set()
+                tree.selection_set(first)
+                tree.focus(first)
+                tree.see(first)
+
+        def open_selected():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showinfo("No selection", "Please select a service first.")
+                return
+            self.show_service_form(service_db.get_service(int(selection[0])))
+
+        tree.bind("<Double-1>", lambda e: open_selected())
+        tree.bind("<Return>", lambda e: open_selected())
+        refresh()
+
+    def show_service_form(self, service=None):
+        """Create/edit a service (code, name, cost, retail price)."""
+        self.current_view = "service_form"
+        self._clear_container()
+        editing = service is not None
+        ttk.Label(
+            self.container,
+            text="Edit Service" if editing else "New Service",
+            font=("Segoe UI", 20, "bold"),
+        ).pack(anchor="w", pady=(0, 15))
+
+        form = ttk.Frame(self.container)
+        form.pack(anchor="w")
+        fields = [
+            ("service_code", "Service Code"),
+            ("service_name", "Service Name"),
+            ("cost", "Cost"),
+            ("retail_price", "Retail Price"),
+        ]
+        entries = {}
+        for row, (key, label) in enumerate(fields):
+            ttk.Label(form, text=label + ":").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
+            entry = ttk.Entry(form, width=40)
+            entry.grid(row=row, column=1, pady=5)
+            if editing:
+                value = service[key]
+                if key in ("cost", "retail_price"):
+                    entry.insert(0, f"{(value or 0):.2f}")
+                else:
+                    entry.insert(0, value or "")
+            entries[key] = entry
+
+        def save():
+            data = {key: entry.get().strip() for key, entry in entries.items()}
+            if not data["service_name"]:
+                messagebox.showwarning("Missing name", "Please enter a service name.")
+                return
+            try:
+                cost = float(data["cost"]) if data["cost"] else 0.0
+                retail = float(data["retail_price"]) if data["retail_price"] else 0.0
+            except ValueError:
+                messagebox.showwarning("Invalid", "Cost and Retail Price must be numbers.")
+                return
+            try:
+                if editing:
+                    service_db.update_service(
+                        service["id"], data["service_code"], data["service_name"], cost, retail
+                    )
+                else:
+                    service_db.create_service(
+                        data["service_code"], data["service_name"], cost, retail
+                    )
+            except service_db.DuplicateCodeError:
+                messagebox.showerror(
+                    "Duplicate code",
+                    f"A service with code '{data['service_code']}' already exists.",
+                )
+                return
+            messagebox.showinfo("Saved", f"Service '{data['service_name']}' saved.")
+            self.show_services()
+
+        def delete_current():
+            if not editing:
+                return
+            if messagebox.askyesno("Delete service", f"Delete '{service['service_name']}'?"):
+                service_db.delete_service(service["id"])
+                self.show_services()
+
+        btns = ttk.Frame(self.container)
+        btns.pack(anchor="w", pady=(20, 0))
+        ttk.Button(btns, text="Save", command=save).pack(side="left")
+        ttk.Button(btns, text="Cancel", command=self.show_services).pack(side="left", padx=(8, 0))
+        if editing:
+            ttk.Button(btns, text="Delete", command=delete_current).pack(side="left", padx=(8, 0))
 
 
 if __name__ == "__main__":
