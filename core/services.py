@@ -6,6 +6,7 @@ central app.db alongside the other entities.
 
 import sqlite3
 
+from core import money
 from core.database import get_connection
 
 
@@ -19,14 +20,24 @@ def create_table():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS services (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                service_code TEXT,
-                service_name TEXT NOT NULL,
-                cost         REAL,
-                retail_price REAL
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_code       TEXT,
+                service_name       TEXT NOT NULL,
+                cost               REAL,
+                retail_price       REAL,
+                cost_pence         INTEGER NOT NULL DEFAULT 0,
+                retail_price_pence INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        # Migrate services created before the pence columns existed.
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(services)")}
+        if "cost_pence" not in cols:
+            conn.execute("ALTER TABLE services ADD COLUMN cost_pence INTEGER NOT NULL DEFAULT 0")
+        if "retail_price_pence" not in cols:
+            conn.execute(
+                "ALTER TABLE services ADD COLUMN retail_price_pence INTEGER NOT NULL DEFAULT 0"
+            )
         # Blank codes are stored as NULL so multiple uncoded services don't clash
         # (SQLite treats NULLs as distinct in a unique index).
         conn.execute("UPDATE services SET service_code = NULL WHERE service_code = ''")
@@ -45,9 +56,11 @@ def create_service(service_code, service_name, cost, retail_price):
     with get_connection() as conn:
         try:
             cursor = conn.execute(
-                "INSERT INTO services (service_code, service_name, cost, retail_price) "
-                "VALUES (?, ?, ?, ?)",
-                (code, service_name, cost, retail_price),
+                "INSERT INTO services "
+                "(service_code, service_name, cost, retail_price, cost_pence, retail_price_pence) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (code, service_name, cost, retail_price,
+                 money.to_pence(cost), money.to_pence(retail_price)),
             )
         except sqlite3.IntegrityError as exc:
             raise DuplicateCodeError(service_code) from exc
@@ -64,8 +77,9 @@ def update_service(service_id, service_code, service_name, cost, retail_price):
         try:
             conn.execute(
                 "UPDATE services SET service_code = ?, service_name = ?, cost = ?, "
-                "retail_price = ? WHERE id = ?",
-                (code, service_name, cost, retail_price, service_id),
+                "retail_price = ?, cost_pence = ?, retail_price_pence = ? WHERE id = ?",
+                (code, service_name, cost, retail_price,
+                 money.to_pence(cost), money.to_pence(retail_price), service_id),
             )
         except sqlite3.IntegrityError as exc:
             raise DuplicateCodeError(service_code) from exc

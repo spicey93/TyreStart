@@ -24,6 +24,7 @@ def init_db():
     """Create every table in the central database. Safe to call on each startup."""
     # Imported here (not at module top) to avoid an import cycle, since the
     # entity modules import get_connection from this module.
+    from core import dbmaint
     from core import suppliers
     from core import products
     from core import nominals
@@ -36,6 +37,7 @@ def init_db():
     from core import pricing
     from core import lookups
 
+    dbmaint.create_table()
     suppliers.create_table()
     products.create_table()
     nominals.create_table()
@@ -47,3 +49,7 @@ def init_db():
     receipts.create_table()
     pricing.create_table()
     lookups.create_table()
+
+    # Run any pending data migrations now that every table/column exists.
+    from core import migrations
+    migrations.run_pending()

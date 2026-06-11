@@ -12,6 +12,7 @@ promoted (Quote → Order → Invoice) it keeps the numbers it earned at each st
 
 import datetime
 
+from core import money
 from core.database import get_connection
 
 STATUSES = ("Quote", "Order", "Invoice")
@@ -24,11 +25,19 @@ OWED_STATUSES = ("Order", "Invoice")
 _STATUS_PREFIX = {"Quote": "Q", "Order": "O", "Invoice": "INV"}
 _STATUS_COLUMN = {"Quote": "quote_no", "Order": "order_no", "Invoice": "invoice_no"}
 
-# SQL fragments for line money (unqualified columns; `si.` variant for subqueries).
-_LINE_NET = "quantity * unit_price"
-_LINE_VAT = "quantity * unit_price * COALESCE(vat_rate, 20) / 100.0"
-_LINE_GROSS = "quantity * unit_price * (1 + COALESCE(vat_rate, 20) / 100.0)"
-_SI_GROSS = "si.quantity * si.unit_price * (1 + COALESCE(si.vat_rate, 20) / 100.0)"
+# SQL fragments for line money, in whole PENCE (unqualified columns; `si.` variant
+# for subqueries). VAT is rounded per line, half-up — CAST(ROUND(.. /100.0)) matches
+# money.vat_pence exactly (verified over all rate/price/qty combinations).
+_LINE_NET = "quantity * unit_price_pence"
+_LINE_VAT = "CAST(ROUND(quantity * unit_price_pence * COALESCE(vat_rate, 20) / 100.0, 0) AS INTEGER)"
+_LINE_GROSS = (
+    "(quantity * unit_price_pence + "
+    "CAST(ROUND(quantity * unit_price_pence * COALESCE(vat_rate, 20) / 100.0, 0) AS INTEGER))"
+)
+_SI_GROSS = (
+    "(si.quantity * si.unit_price_pence + "
+    "CAST(ROUND(si.quantity * si.unit_price_pence * COALESCE(si.vat_rate, 20) / 100.0, 0) AS INTEGER))"
+)
 
 
 def _now():
@@ -68,11 +77,19 @@ def create_table():
                 service_id  INTEGER REFERENCES services(id),
                 description TEXT,
                 quantity    INTEGER NOT NULL,
-                unit_price  REAL NOT NULL,
+                unit_price  REAL NOT NULL,                     -- pounds (display mirror)
+                unit_price_pence INTEGER NOT NULL DEFAULT 0,   -- authoritative net unit price
                 vat_rate    REAL NOT NULL DEFAULT 20
             )
             """
         )
+        # Migrate sale_items created before the pence column existed (back-filled by
+        # core.migrate_money from the REAL unit_price).
+        si_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sale_items)")}
+        if "unit_price_pence" not in si_cols:
+            conn.execute(
+                "ALTER TABLE sale_items ADD COLUMN unit_price_pence INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items(product_id)"
@@ -82,12 +99,13 @@ def create_table():
 def _insert_items(conn, sale_id, items):
     conn.executemany(
         "INSERT INTO sale_items "
-        "(sale_id, item_type, product_id, service_id, description, quantity, unit_price, vat_rate) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "(sale_id, item_type, product_id, service_id, description, quantity, "
+        " unit_price, unit_price_pence, vat_rate) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (sale_id, it["item_type"], it.get("product_id"), it.get("service_id"),
              it.get("description", ""), it["quantity"], it["unit_price"],
-             it.get("vat_rate", DEFAULT_VAT_RATE))
+             money.to_pence(it["unit_price"]), it.get("vat_rate", DEFAULT_VAT_RATE))
             for it in items
         ],
     )
@@ -177,13 +195,18 @@ def get_sale_items(sale_id):
     with get_connection() as conn:
         return conn.execute(
             "SELECT id, item_type, product_id, service_id, description, quantity, "
-            "unit_price, vat_rate FROM sale_items WHERE sale_id = ? ORDER BY id",
+            "unit_price, unit_price_pence, vat_rate FROM sale_items WHERE sale_id = ? ORDER BY id",
             (sale_id,),
         ).fetchall()
 
 
 def sale_totals(sale_id):
-    """Return {'net', 'vat', 'gross'} for a sale."""
+    """Return {'net', 'vat', 'gross'} (pounds) for a sale."""
+    return {k: money.from_pence(v) for k, v in sale_totals_pence(sale_id).items()}
+
+
+def sale_totals_pence(sale_id):
+    """Return {'net', 'vat', 'gross'} in whole pence for a sale (ledger primitive)."""
     with get_connection() as conn:
         row = conn.execute(
             f"SELECT COALESCE(SUM({_LINE_NET}), 0) AS net, "
@@ -206,7 +229,7 @@ def customer_sales(customer_id, outstanding_only=False):
             "SELECT s.id, s.reference, s.date, "
             f"COALESCE((SELECT SUM({_SI_GROSS}) FROM sale_items si "
             "          WHERE si.sale_id = s.id), 0) AS total, "
-            "COALESCE((SELECT SUM(ra.amount) FROM receipt_allocations ra "
+            "COALESCE((SELECT SUM(ra.amount_pence) FROM receipt_allocations ra "
             "          WHERE ra.sale_id = s.id), 0) AS allocated "
             "FROM sales s "
             "WHERE s.customer_id = ? AND s.status IN ('Order', 'Invoice') "
@@ -215,12 +238,14 @@ def customer_sales(customer_id, outstanding_only=False):
         ).fetchall()
     result = []
     for r in rows:
-        outstanding = round(r["total"] - r["allocated"], 2)
-        if outstanding_only and outstanding <= 0:
+        outstanding_p = r["total"] - r["allocated"]   # whole pence
+        if outstanding_only and outstanding_p <= 0:
             continue
         result.append({
             "id": r["id"], "reference": r["reference"], "date": r["date"],
-            "total": r["total"], "allocated": r["allocated"], "outstanding": outstanding,
+            "total": money.from_pence(r["total"]),
+            "allocated": money.from_pence(r["allocated"]),
+            "outstanding": money.from_pence(outstanding_p),
         })
     return result
 
@@ -231,7 +256,7 @@ def list_for_customer(customer_id):
         return conn.execute(
             "SELECT s.id, s.reference, s.status, s.date, "
             f"COALESCE((SELECT SUM({_SI_GROSS}) FROM sale_items si "
-            "          WHERE si.sale_id = s.id), 0) AS total "
+            "          WHERE si.sale_id = s.id), 0) / 100.0 AS total "
             "FROM sales s WHERE s.customer_id = ? ORDER BY s.id DESC",
             (customer_id,),
         ).fetchall()
@@ -245,7 +270,7 @@ def list_sales(text="", status=""):
             "SELECT s.id, s.reference, s.status, s.date, s.customer_id, "
             "c.name AS customer_name, "
             f"COALESCE((SELECT SUM({_SI_GROSS}) FROM sale_items si "
-            "          WHERE si.sale_id = s.id), 0) AS total "
+            "          WHERE si.sale_id = s.id), 0) / 100.0 AS total "
             "FROM sales s JOIN customers c ON c.id = s.customer_id "
             "WHERE (s.reference LIKE ? COLLATE NOCASE OR c.name LIKE ? COLLATE NOCASE) "
             "AND (? = '' OR s.status = ?) "

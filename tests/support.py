@@ -12,6 +12,7 @@ from pathlib import Path
 
 from core import database
 from core import suppliers, customers, products, nominals
+from core import sales, purchases, payments, receipts, services
 
 
 class DatabaseTestCase(unittest.TestCase):
@@ -41,5 +42,47 @@ class DatabaseTestCase(unittest.TestCase):
     def make_product(self, description="205/55R16 Test Tyre"):
         return products.create_product(description)
 
+    def make_service(self, name="Fitting", code=None, cost=5.0, retail=10.0):
+        return services.create_service(code, name, cost, retail)
+
     def first_nominal(self):
         return nominals.get_all()[0]["id"]
+
+    # --- document fixtures (sensible defaults; override as needed) ---
+    def make_sale_invoice(self, customer_id=None, items=None, date="01/01/26",
+                          status="Invoice"):
+        """Create a sale (default: one 4×£50 +20% product line) and return its id."""
+        if customer_id is None:
+            customer_id = self.make_customer()
+        if items is None:
+            pid = self.make_product()
+            items = [{"item_type": "product", "product_id": pid, "service_id": None,
+                      "description": "", "quantity": 4, "unit_price": 50.0,
+                      "vat_rate": 20.0}]
+        return sales.create_sale(customer_id, status, date, items)
+
+    def make_purchase_invoice(self, supplier_id=None, items=None, date="01/01/26",
+                              reference="INV1", status="Invoice"):
+        """Create a purchase (default: one 4×£30 +20% product line) and return its id."""
+        if supplier_id is None:
+            supplier_id = self.make_supplier()
+        if items is None:
+            pid = self.make_product()
+            items = [{"product_id": pid, "quantity": 4, "received": 0,
+                      "cost_price": 30.0, "vat_rate": 20.0}]
+        return purchases.create_purchase(supplier_id, status, reference, date, items)
+
+    def make_payment(self, supplier_id, amount, account_id=None, date="01/01/26",
+                     allocations=None):
+        """Record a supplier payment and return its id."""
+        if account_id is None:
+            account_id = self.first_nominal()
+        return payments.create_payment(supplier_id, account_id, "BACS", date,
+                                        amount, allocations)
+
+    def make_receipt(self, customer_id, allocations, account_id=None, date="01/01/26"):
+        """Record a customer receipt (amount = sum of allocations) and return its id."""
+        if account_id is None:
+            account_id = self.first_nominal()
+        return receipts.create_receipt(customer_id, account_id, "BACS", date,
+                                       allocations)

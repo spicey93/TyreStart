@@ -7,6 +7,7 @@ supplier's invoices (payment.amount = sum of its allocations). Stored in app.db.
 
 import datetime
 
+from core import money
 from core.database import get_connection
 
 METHODS = ("Cash", "Card", "BACS")
@@ -27,7 +28,8 @@ def create_table():
                 nominal_account_id INTEGER NOT NULL REFERENCES nominal_accounts(id),
                 method             TEXT,
                 date               TEXT,
-                amount             REAL NOT NULL,
+                amount             REAL NOT NULL,            -- pounds (display mirror)
+                amount_pence       INTEGER NOT NULL DEFAULT 0,
                 created_at         TEXT
             )
             """
@@ -35,13 +37,24 @@ def create_table():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS payment_allocations (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                payment_id  INTEGER NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
-                purchase_id INTEGER NOT NULL REFERENCES purchases(id),
-                amount      REAL NOT NULL
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                payment_id   INTEGER NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+                purchase_id  INTEGER NOT NULL REFERENCES purchases(id),
+                amount       REAL NOT NULL,
+                amount_pence INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        # Migrate rows created before the pence columns existed (back-filled by
+        # core.migrate_money from the REAL amount).
+        pcols = {row["name"] for row in conn.execute("PRAGMA table_info(payments)")}
+        if "amount_pence" not in pcols:
+            conn.execute("ALTER TABLE payments ADD COLUMN amount_pence INTEGER NOT NULL DEFAULT 0")
+        acols = {row["name"] for row in conn.execute("PRAGMA table_info(payment_allocations)")}
+        if "amount_pence" not in acols:
+            conn.execute(
+                "ALTER TABLE payment_allocations ADD COLUMN amount_pence INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_alloc_payment ON payment_allocations(payment_id)"
         )
@@ -58,20 +71,22 @@ def create_payment(supplier_id, nominal_account_id, method, date, amount, alloca
     invoices later (see `add_allocations`). `allocations`, when given, is a list
     of {"purchase_id", "amount"} applied immediately.
     """
-    amount = round(amount, 2)
+    amount_pence = money.to_pence(amount)
+    amount = money.from_pence(amount_pence)
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO payments "
-            "(supplier_id, nominal_account_id, method, date, amount, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (supplier_id, nominal_account_id, method, date, amount, _now()),
+            "(supplier_id, nominal_account_id, method, date, amount, amount_pence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (supplier_id, nominal_account_id, method, date, amount, amount_pence, _now()),
         )
         payment_id = cursor.lastrowid
         if allocations:
             conn.executemany(
-                "INSERT INTO payment_allocations (payment_id, purchase_id, amount) "
-                "VALUES (?, ?, ?)",
-                [(payment_id, a["purchase_id"], a["amount"]) for a in allocations],
+                "INSERT INTO payment_allocations (payment_id, purchase_id, amount, amount_pence) "
+                "VALUES (?, ?, ?, ?)",
+                [(payment_id, a["purchase_id"], money.from_pence(money.to_pence(a["amount"])),
+                  money.to_pence(a["amount"])) for a in allocations],
             )
         return payment_id
 
@@ -86,9 +101,10 @@ def add_allocations(payment_id, allocations):
         return
     with get_connection() as conn:
         conn.executemany(
-            "INSERT INTO payment_allocations (payment_id, purchase_id, amount) "
-            "VALUES (?, ?, ?)",
-            [(payment_id, a["purchase_id"], a["amount"]) for a in allocations],
+            "INSERT INTO payment_allocations (payment_id, purchase_id, amount, amount_pence) "
+            "VALUES (?, ?, ?, ?)",
+            [(payment_id, a["purchase_id"], money.from_pence(money.to_pence(a["amount"])),
+              money.to_pence(a["amount"])) for a in allocations],
         )
 
 
@@ -131,19 +147,21 @@ def get_payments(supplier_id):
 
 
 def supplier_balance(supplier_id):
-    """Supplier balance = invoices - credit notes - payments (all gross)."""
+    """Supplier balance (pounds) = invoices - credit notes - payments (all gross)."""
     with get_connection() as conn:
         # Invoices add to the balance; Credit Notes reduce it (signed per status).
+        # Line gross is computed in whole pence (VAT rounded per line, half-up).
         net_invoiced = conn.execute(
             "SELECT COALESCE(SUM(CASE pu.status WHEN 'Invoice' THEN 1 "
-            "WHEN 'Credit Note' THEN -1 ELSE 0 END * pi.quantity * pi.cost_price * "
-            "(1 + COALESCE(pi.vat_rate, 20) / 100.0)), 0) "
+            "WHEN 'Credit Note' THEN -1 ELSE 0 END * (pi.quantity * pi.cost_price_pence + "
+            "CAST(ROUND(pi.quantity * pi.cost_price_pence * "
+            "COALESCE(pi.vat_rate, 20) / 100.0, 0) AS INTEGER))), 0) "
             "FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id "
             "WHERE pu.supplier_id = ?",
             (supplier_id,),
         ).fetchone()[0]
         paid = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM payments WHERE supplier_id = ?",
+            "SELECT COALESCE(SUM(amount_pence), 0) FROM payments WHERE supplier_id = ?",
             (supplier_id,),
         ).fetchone()[0]
-    return round(net_invoiced - paid, 2)
+    return money.from_pence(net_invoiced - paid)

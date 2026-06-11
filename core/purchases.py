@@ -9,6 +9,7 @@ until received. Stored in the central app.db alongside the other entities.
 
 import datetime
 
+from core import money
 from core.database import get_connection
 
 STATUSES = ("Order", "Invoice", "Credit Note")
@@ -17,12 +18,19 @@ STATUSES = ("Order", "Invoice", "Credit Note")
 DEFAULT_VAT_RATE = 20.0
 VAT_RATES = (20.0, 5.0, 0.0)
 
-# SQL fragments for line money (use unqualified columns; add a `pi.` prefix in joins).
-_LINE_NET = "quantity * cost_price"
-_LINE_VAT = "quantity * cost_price * COALESCE(vat_rate, 20) / 100.0"
-_LINE_GROSS = "quantity * cost_price * (1 + COALESCE(vat_rate, 20) / 100.0)"
+# SQL fragments for line money, in whole PENCE (unqualified columns; `pi.` variant
+# for subqueries). VAT rounded per line, half-up — matches money.vat_pence exactly.
+_LINE_NET = "quantity * cost_price_pence"
+_LINE_VAT = "CAST(ROUND(quantity * cost_price_pence * COALESCE(vat_rate, 20) / 100.0, 0) AS INTEGER)"
+_LINE_GROSS = (
+    "(quantity * cost_price_pence + "
+    "CAST(ROUND(quantity * cost_price_pence * COALESCE(vat_rate, 20) / 100.0, 0) AS INTEGER))"
+)
 # Gross expression for a subquery where purchase_items is aliased `pi`.
-_PI_GROSS = "pi.quantity * pi.cost_price * (1 + COALESCE(pi.vat_rate, 20) / 100.0)"
+_PI_GROSS = (
+    "(pi.quantity * pi.cost_price_pence + "
+    "CAST(ROUND(pi.quantity * pi.cost_price_pence * COALESCE(pi.vat_rate, 20) / 100.0, 0) AS INTEGER))"
+)
 
 
 def _now():
@@ -74,7 +82,8 @@ def create_table():
                 product_id  INTEGER NOT NULL REFERENCES products(id),
                 quantity    INTEGER NOT NULL,
                 received    INTEGER NOT NULL DEFAULT 0,  -- qty received against a PO line
-                cost_price  REAL NOT NULL,
+                cost_price  REAL NOT NULL,               -- pounds (display mirror)
+                cost_price_pence INTEGER NOT NULL DEFAULT 0,  -- authoritative net cost
                 vat_rate    REAL NOT NULL DEFAULT 20
             )
             """
@@ -88,6 +97,10 @@ def create_table():
         if "received" not in cols:
             conn.execute(
                 "ALTER TABLE purchase_items ADD COLUMN received INTEGER NOT NULL DEFAULT 0"
+            )
+        if "cost_price_pence" not in cols:
+            conn.execute(
+                "ALTER TABLE purchase_items ADD COLUMN cost_price_pence INTEGER NOT NULL DEFAULT 0"
             )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase "
@@ -107,11 +120,12 @@ _REF_PREFIX = {"Order": "PO", "Credit Note": "CN"}
 def _insert_items(conn, purchase_id, items):
     conn.executemany(
         "INSERT INTO purchase_items "
-        "(purchase_id, product_id, quantity, received, cost_price, vat_rate) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(purchase_id, product_id, quantity, received, cost_price, cost_price_pence, vat_rate) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             (purchase_id, it["product_id"], it["quantity"], it.get("received", 0),
-             it["cost_price"], it.get("vat_rate", DEFAULT_VAT_RATE))
+             it["cost_price"], money.to_pence(it["cost_price"]),
+             it.get("vat_rate", DEFAULT_VAT_RATE))
             for it in items
         ],
     )
@@ -210,7 +224,7 @@ def get_purchase_items(purchase_id):
     with get_connection() as conn:
         return conn.execute(
             "SELECT pi.id, pi.product_id, pi.quantity, pi.received, pi.cost_price, "
-            "pi.vat_rate, pr.description, pr.stock_code "
+            "pi.cost_price_pence, pi.vat_rate, pr.description, pr.stock_code "
             "FROM purchase_items pi JOIN products pr ON pr.id = pi.product_id "
             "WHERE pi.purchase_id = ? ORDER BY pi.id",
             (purchase_id,),
@@ -250,17 +264,17 @@ def receive_purchase(po_id, received_by_item, date):
 
 
 def purchase_total(purchase_id):
-    """Gross total of a purchase (net + VAT)."""
-    with get_connection() as conn:
-        return conn.execute(
-            f"SELECT COALESCE(SUM({_LINE_GROSS}), 0) FROM purchase_items "
-            "WHERE purchase_id = ?",
-            (purchase_id,),
-        ).fetchone()[0]
+    """Gross total of a purchase in pounds (net + VAT)."""
+    return money.from_pence(purchase_totals_pence(purchase_id)["gross"])
 
 
 def purchase_totals(purchase_id):
-    """Return {'net', 'vat', 'gross'} for a purchase."""
+    """Return {'net', 'vat', 'gross'} (pounds) for a purchase."""
+    return {k: money.from_pence(v) for k, v in purchase_totals_pence(purchase_id).items()}
+
+
+def purchase_totals_pence(purchase_id):
+    """Return {'net', 'vat', 'gross'} in whole pence for a purchase (ledger primitive)."""
     with get_connection() as conn:
         row = conn.execute(
             f"SELECT COALESCE(SUM({_LINE_NET}), 0) AS net, "
@@ -284,7 +298,7 @@ def list_purchases(text="", status=""):
             "SELECT pu.id, pu.reference, pu.status, pu.date, pu.supplier_id, "
             "s.name AS supplier_name, "
             f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
-            "          WHERE pi.purchase_id = pu.id), 0) AS total "
+            "          WHERE pi.purchase_id = pu.id), 0) / 100.0 AS total "
             "FROM purchases pu JOIN suppliers s ON s.id = pu.supplier_id "
             "WHERE (pu.reference LIKE ? COLLATE NOCASE OR s.name LIKE ? COLLATE NOCASE) "
             "AND (? = '' OR pu.status = ?) "
@@ -303,7 +317,7 @@ def supplier_invoices(supplier_id, outstanding_only=False):
             "SELECT pu.id, pu.reference, pu.date, "
             f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
             "          WHERE pi.purchase_id = pu.id), 0) AS total, "
-            "COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa "
+            "COALESCE((SELECT SUM(pa.amount_pence) FROM payment_allocations pa "
             "          WHERE pa.purchase_id = pu.id), 0) AS allocated "
             "FROM purchases pu "
             "WHERE pu.supplier_id = ? AND pu.status = 'Invoice' "
@@ -312,17 +326,17 @@ def supplier_invoices(supplier_id, outstanding_only=False):
         ).fetchall()
     invoices = []
     for r in rows:
-        outstanding = round(r["total"] - r["allocated"], 2)
-        if outstanding_only and outstanding <= 0:
+        outstanding_p = r["total"] - r["allocated"]   # whole pence
+        if outstanding_only and outstanding_p <= 0:
             continue
         invoices.append(
             {
                 "id": r["id"],
                 "reference": r["reference"],
                 "date": r["date"],
-                "total": r["total"],
-                "allocated": r["allocated"],
-                "outstanding": outstanding,
+                "total": money.from_pence(r["total"]),
+                "allocated": money.from_pence(r["allocated"]),
+                "outstanding": money.from_pence(outstanding_p),
             }
         )
     return invoices
@@ -335,9 +349,9 @@ def supplier_purchases(supplier_id):
         return conn.execute(
             "SELECT pu.id, pu.reference, pu.status, pu.date, pu.reconciled, "
             f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
-            "          WHERE pi.purchase_id = pu.id), 0) AS total, "
-            "COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa "
-            "          WHERE pa.purchase_id = pu.id), 0) AS allocated "
+            "          WHERE pi.purchase_id = pu.id), 0) / 100.0 AS total, "
+            "COALESCE((SELECT SUM(pa.amount_pence) FROM payment_allocations pa "
+            "          WHERE pa.purchase_id = pu.id), 0) / 100.0 AS allocated "
             "FROM purchases pu WHERE pu.supplier_id = ? ORDER BY pu.id DESC",
             (supplier_id,),
         ).fetchall()

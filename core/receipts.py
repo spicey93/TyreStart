@@ -7,6 +7,7 @@ is allocated to one or more of the customer's sales. Stored in app.db.
 
 import datetime
 
+from core import money
 from core.database import get_connection
 
 METHODS = ("Cash", "Card", "BACS")
@@ -27,7 +28,8 @@ def create_table():
                 nominal_account_id INTEGER NOT NULL REFERENCES nominal_accounts(id),
                 method             TEXT,
                 date               TEXT,
-                amount             REAL NOT NULL,
+                amount             REAL NOT NULL,            -- pounds (display mirror)
+                amount_pence       INTEGER NOT NULL DEFAULT 0,
                 created_at         TEXT
             )
             """
@@ -35,13 +37,24 @@ def create_table():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS receipt_allocations (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                receipt_id INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
-                sale_id    INTEGER NOT NULL REFERENCES sales(id),
-                amount     REAL NOT NULL
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_id   INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
+                sale_id      INTEGER NOT NULL REFERENCES sales(id),
+                amount       REAL NOT NULL,
+                amount_pence INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        # Migrate rows created before the pence columns existed (back-filled by
+        # core.migrate_money from the REAL amount).
+        rcols = {row["name"] for row in conn.execute("PRAGMA table_info(receipts)")}
+        if "amount_pence" not in rcols:
+            conn.execute("ALTER TABLE receipts ADD COLUMN amount_pence INTEGER NOT NULL DEFAULT 0")
+        acols = {row["name"] for row in conn.execute("PRAGMA table_info(receipt_allocations)")}
+        if "amount_pence" not in acols:
+            conn.execute(
+                "ALTER TABLE receipt_allocations ADD COLUMN amount_pence INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_recalloc_receipt ON receipt_allocations(receipt_id)"
         )
@@ -56,19 +69,21 @@ def create_receipt(customer_id, nominal_account_id, method, date, allocations):
     `allocations` is a list of {"sale_id", "amount"}; the receipt's total amount
     is the sum of the allocated amounts.
     """
-    amount = round(sum(a["amount"] for a in allocations), 2)
+    total_pence = sum(money.to_pence(a["amount"]) for a in allocations)
+    amount = money.from_pence(total_pence)
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO receipts "
-            "(customer_id, nominal_account_id, method, date, amount, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (customer_id, nominal_account_id, method, date, amount, _now()),
+            "(customer_id, nominal_account_id, method, date, amount, amount_pence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (customer_id, nominal_account_id, method, date, amount, total_pence, _now()),
         )
         receipt_id = cursor.lastrowid
         conn.executemany(
-            "INSERT INTO receipt_allocations (receipt_id, sale_id, amount) "
-            "VALUES (?, ?, ?)",
-            [(receipt_id, a["sale_id"], a["amount"]) for a in allocations],
+            "INSERT INTO receipt_allocations (receipt_id, sale_id, amount, amount_pence) "
+            "VALUES (?, ?, ?, ?)",
+            [(receipt_id, a["sale_id"], money.from_pence(money.to_pence(a["amount"])),
+              money.to_pence(a["amount"])) for a in allocations],
         )
         return receipt_id
 
@@ -89,17 +104,18 @@ def get_receipts(customer_id):
 
 
 def customer_balance(customer_id):
-    """Customer balance = sum of owed (Order/Invoice) totals (gross) - receipts."""
+    """Customer balance (pounds) = sum of owed (Order/Invoice) gross - receipts."""
     with get_connection() as conn:
         sold = conn.execute(
-            "SELECT COALESCE(SUM(si.quantity * si.unit_price * "
-            "(1 + COALESCE(si.vat_rate, 20) / 100.0)), 0) "
+            "SELECT COALESCE(SUM(si.quantity * si.unit_price_pence + "
+            "CAST(ROUND(si.quantity * si.unit_price_pence * "
+            "COALESCE(si.vat_rate, 20) / 100.0, 0) AS INTEGER)), 0) "
             "FROM sale_items si JOIN sales sa ON sa.id = si.sale_id "
             "WHERE sa.customer_id = ? AND sa.status IN ('Order', 'Invoice')",
             (customer_id,),
         ).fetchone()[0]
         received = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM receipts WHERE customer_id = ?",
+            "SELECT COALESCE(SUM(amount_pence), 0) FROM receipts WHERE customer_id = ?",
             (customer_id,),
         ).fetchone()[0]
-    return round(sold - received, 2)
+    return money.from_pence(sold - received)
