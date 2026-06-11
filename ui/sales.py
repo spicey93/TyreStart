@@ -406,8 +406,7 @@ class SalesMixin:
         frame.pack(fill="both", expand=True)
         entries = {}
         fields = [
-            ("name", "Name"), ("contact", "Contact"), ("email", "Email"),
-            ("phone", "Phone"),
+            ("name", "Name"), ("email", "Email"), ("phone", "Phone"),
         ]
         for row, (key, label) in enumerate(fields):
             ttk.Label(frame, text=label + ":").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
@@ -425,7 +424,7 @@ class SalesMixin:
                 return
             try:
                 customer_id = customer_db.add_customer(
-                    data["name"], "", data["contact"], data["email"], data["phone"],
+                    data["name"], email=data["email"], phone=data["phone"],
                 )
             except customer_db.DuplicateNameError:
                 messagebox.showerror(
@@ -460,10 +459,10 @@ class SalesMixin:
 
         tree_frame = ttk.Frame(dialog, padding=(10, 0))
         tree_frame.pack(fill="both", expand=True)
-        cols = ("name", "account_number", "contact", "phone")
+        cols = ("name", "account_number", "postcode", "phone")
         tree = ttk.Treeview(tree_frame, columns=cols, show="headings")
         for col, heading, width in zip(
-            cols, ("Name", "Account #", "Contact", "Phone"), (190, 90, 130, 110)
+            cols, ("Name", "Account #", "Postcode", "Phone"), (190, 90, 130, 110)
         ):
             tree.heading(col, text=heading)
             tree.column(col, width=width)
@@ -481,12 +480,12 @@ class SalesMixin:
             tree.delete(*tree.get_children())
             for c in all_customers:
                 hay = " ".join(
-                    str(c[k] or "") for k in ("name", "account_number", "contact", "email", "phone")
+                    str(c[k] or "") for k in ("name", "account_number", "postcode", "email", "phone")
                 ).lower()
                 if not needle or needle in hay:
                     tree.insert(
                         "", "end", iid=str(c["id"]),
-                        values=(c["name"], c["account_number"] or "", c["contact"] or "",
+                        values=(c["name"], c["account_number"] or "", c["postcode"] or "",
                                 c["phone"] or ""),
                     )
 

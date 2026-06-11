@@ -30,8 +30,8 @@ class CustomersMixin:
         ttk.Button(bar, text="Search", command=lambda: do_search()).grid(row=0, column=2, padx=(0, 8))
         ttk.Button(bar, text="Clear", command=lambda: clear()).grid(row=0, column=3)
 
-        columns = ("name", "account_number", "contact", "email", "phone")
-        headings = ("Name", "Account #", "Contact", "Email", "Phone")
+        columns = ("name", "account_number", "postcode", "email", "phone")
+        headings = ("Name", "Account #", "Postcode", "Email", "Phone")
         table_frame = ttk.Frame(self.container)
         table_frame.pack(fill="both", expand=True)
         tree = ttk.Treeview(table_frame, columns=columns, show="headings")
@@ -54,7 +54,7 @@ class CustomersMixin:
                 if not query or query in (c["name"] or "").lower():
                     tree.insert(
                         "", "end", iid=str(c["id"]),
-                        values=(c["name"], c["account_number"], c["contact"], c["email"], c["phone"]),
+                        values=(c["name"], c["account_number"], c["postcode"], c["email"], c["phone"]),
                     )
             if not tree.get_children():
                 status_label.config(
@@ -131,7 +131,8 @@ class CustomersMixin:
         fields = [
             ("name", "Name"),
             ("account_number", "Account #"),
-            ("contact", "Contact"),
+            ("address", "Address"),
+            ("postcode", "Postcode"),
             ("email", "Email"),
             ("phone", "Phone"),
         ]
@@ -170,12 +171,12 @@ class CustomersMixin:
                 if editing:
                     customer_db.update_customer(
                         customer["id"], data["name"], data["account_number"],
-                        data["contact"], data["email"], data["phone"],
+                        data["address"], data["postcode"], data["email"], data["phone"],
                     )
                     return customer["id"]
                 return customer_db.add_customer(
                     data["name"], data["account_number"],
-                    data["contact"], data["email"], data["phone"],
+                    data["address"], data["postcode"], data["email"], data["phone"],
                 )
             except customer_db.DuplicateNameError:
                 messagebox.showerror(
