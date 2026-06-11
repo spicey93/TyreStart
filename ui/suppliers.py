@@ -408,7 +408,7 @@ class SuppliersMixin:
         def open_selected(event=None):
             sel = tree.selection()
             if sel:
-                self.show_purchase_form(purchase_db.get_purchase(int(sel[0])))
+                self.open_purchase(purchase_db.get_purchase(int(sel[0])))
 
         tree.bind("<Double-1>", open_selected)
         tree.bind("<Return>", open_selected)

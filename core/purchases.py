@@ -33,21 +33,29 @@ def create_table():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS purchases (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-                status      TEXT NOT NULL,
-                reference   TEXT,
-                date        TEXT,
-                reconciled  INTEGER NOT NULL DEFAULT 0,
-                created_at  TEXT
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id  INTEGER NOT NULL REFERENCES suppliers(id),
+                status       TEXT NOT NULL,
+                reference    TEXT,
+                po_reference TEXT,        -- on an Invoice: the PO number it came from
+                date         TEXT,
+                reconciled   INTEGER NOT NULL DEFAULT 0,
+                received     INTEGER NOT NULL DEFAULT 0,  -- a PO that's been received
+                created_at   TEXT
             )
             """
         )
-        # Migrate databases created before the reconciled flag existed.
+        # Migrate databases created before these columns existed.
         pcols = {row["name"] for row in conn.execute("PRAGMA table_info(purchases)")}
         if "reconciled" not in pcols:
             conn.execute(
                 "ALTER TABLE purchases ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0"
+            )
+        if "po_reference" not in pcols:
+            conn.execute("ALTER TABLE purchases ADD COLUMN po_reference TEXT")
+        if "received" not in pcols:
+            conn.execute(
+                "ALTER TABLE purchases ADD COLUMN received INTEGER NOT NULL DEFAULT 0"
             )
         conn.execute(
             """
@@ -56,16 +64,21 @@ def create_table():
                 purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
                 product_id  INTEGER NOT NULL REFERENCES products(id),
                 quantity    INTEGER NOT NULL,
+                received    INTEGER NOT NULL DEFAULT 0,  -- qty received against a PO line
                 cost_price  REAL NOT NULL,
                 vat_rate    REAL NOT NULL DEFAULT 20
             )
             """
         )
-        # Migrate purchase_items created before VAT existed.
+        # Migrate purchase_items created before these columns existed.
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(purchase_items)")}
         if "vat_rate" not in cols:
             conn.execute(
                 "ALTER TABLE purchase_items ADD COLUMN vat_rate REAL NOT NULL DEFAULT 20"
+            )
+        if "received" not in cols:
+            conn.execute(
+                "ALTER TABLE purchase_items ADD COLUMN received INTEGER NOT NULL DEFAULT 0"
             )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase "
@@ -77,26 +90,57 @@ def create_table():
         )
 
 
+PO_PREFIX = "PO"
+
+
 def _insert_items(conn, purchase_id, items):
     conn.executemany(
-        "INSERT INTO purchase_items (purchase_id, product_id, quantity, cost_price, vat_rate) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO purchase_items "
+        "(purchase_id, product_id, quantity, received, cost_price, vat_rate) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         [
-            (purchase_id, it["product_id"], it["quantity"], it["cost_price"],
-             it.get("vat_rate", DEFAULT_VAT_RATE))
+            (purchase_id, it["product_id"], it["quantity"], it.get("received", 0),
+             it["cost_price"], it.get("vat_rate", DEFAULT_VAT_RATE))
             for it in items
         ],
     )
 
 
-def create_purchase(supplier_id, status, reference, date, items, reconciled=0):
-    """Insert a purchase with its line items. Returns the new purchase id."""
+def next_po_number(conn=None):
+    """The next sequential purchase-order number, e.g. 'PO0001'."""
+    def compute(c):
+        highest = 0
+        for row in c.execute(
+            "SELECT reference AS r FROM purchases "
+            "WHERE status = 'Order' AND reference LIKE ?", (PO_PREFIX + "%",)
+        ):
+            digits = (row["r"] or "")[len(PO_PREFIX):]
+            if digits.isdigit():
+                highest = max(highest, int(digits))
+        return f"{PO_PREFIX}{highest + 1:04d}"
+
+    if conn is not None:
+        return compute(conn)
     with get_connection() as conn:
+        return compute(conn)
+
+
+def create_purchase(supplier_id, status, reference, date, items, reconciled=0,
+                    po_reference=""):
+    """Insert a purchase with its line items. Returns the new purchase id.
+
+    A purchase **Order** with no reference is given the next auto PO number;
+    Invoices keep the (manually entered) reference. `po_reference` links an
+    invoice back to the PO number it was raised from.
+    """
+    with get_connection() as conn:
+        if status == "Order" and not reference:
+            reference = next_po_number(conn)
         cursor = conn.execute(
             "INSERT INTO purchases "
-            "(supplier_id, status, reference, date, reconciled, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (supplier_id, status, reference, date, int(reconciled), _now()),
+            "(supplier_id, status, reference, po_reference, date, reconciled, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (supplier_id, status, reference, po_reference, date, int(reconciled), _now()),
         )
         purchase_id = cursor.lastrowid
         _insert_items(conn, purchase_id, items)
@@ -104,13 +148,14 @@ def create_purchase(supplier_id, status, reference, date, items, reconciled=0):
 
 
 def update_purchase(purchase_id, supplier_id, status, reference, date, items,
-                    reconciled=0):
+                    reconciled=0, po_reference=""):
     """Update a purchase, replacing all of its line items."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE purchases SET supplier_id = ?, status = ?, reference = ?, "
-            "date = ?, reconciled = ? WHERE id = ?",
-            (supplier_id, status, reference, date, int(reconciled), purchase_id),
+            "po_reference = ?, date = ?, reconciled = ? WHERE id = ?",
+            (supplier_id, status, reference, po_reference, date, int(reconciled),
+             purchase_id),
         )
         conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
         _insert_items(conn, purchase_id, items)
@@ -126,8 +171,8 @@ def get_purchase(purchase_id):
     """Return the purchase row (with supplier name), or None."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT pu.id, pu.supplier_id, pu.status, pu.reference, pu.date, "
-            "pu.reconciled, s.name AS supplier_name "
+            "SELECT pu.id, pu.supplier_id, pu.status, pu.reference, pu.po_reference, "
+            "pu.date, pu.reconciled, pu.received, s.name AS supplier_name "
             "FROM purchases pu JOIN suppliers s ON s.id = pu.supplier_id "
             "WHERE pu.id = ?",
             (purchase_id,),
@@ -138,12 +183,44 @@ def get_purchase_items(purchase_id):
     """Return the line items for a purchase, with product description/stock code."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT pi.id, pi.product_id, pi.quantity, pi.cost_price, pi.vat_rate, "
-            "pr.description, pr.stock_code "
+            "SELECT pi.id, pi.product_id, pi.quantity, pi.received, pi.cost_price, "
+            "pi.vat_rate, pr.description, pr.stock_code "
             "FROM purchase_items pi JOIN products pr ON pr.id = pi.product_id "
             "WHERE pi.purchase_id = ? ORDER BY pi.id",
             (purchase_id,),
         ).fetchall()
+
+
+def receive_purchase(po_id, received_by_item, date):
+    """Record a delivery against a purchase order and raise the linked invoice.
+
+    `received_by_item` maps a purchase_items.id to the quantity received. The PO's
+    line `received` figures and its `received` flag are updated, then an Invoice is
+    created (linked via `po_reference` = the PO's number) containing the received
+    quantities at the PO's costs. Returns the new invoice's id, or None if nothing
+    was received.
+    """
+    with get_connection() as conn:
+        for item_id, qty in received_by_item.items():
+            conn.execute(
+                "UPDATE purchase_items SET received = ? WHERE id = ? AND purchase_id = ?",
+                (int(qty), item_id, po_id),
+            )
+        conn.execute("UPDATE purchases SET received = 1 WHERE id = ?", (po_id,))
+        po = conn.execute(
+            "SELECT supplier_id, reference FROM purchases WHERE id = ?", (po_id,)
+        ).fetchone()
+
+    items = [
+        {"product_id": it["product_id"], "quantity": it["received"],
+         "cost_price": it["cost_price"], "vat_rate": it["vat_rate"]}
+        for it in get_purchase_items(po_id) if it["received"] > 0
+    ]
+    if not items:
+        return None
+    # Invoice number (reference) is entered later by the user; link via po_reference.
+    return create_purchase(po["supplier_id"], "Invoice", "", date, items,
+                           po_reference=po["reference"])
 
 
 def purchase_total(purchase_id):
