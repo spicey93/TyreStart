@@ -2,6 +2,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+from ui import theme
+
 
 # VAT rate options for the line dialog: (label shown, rate percent).
 VAT_RATE_OPTIONS = [("20% (Standard)", 20.0), ("5% (Reduced)", 5.0), ("0% (Zero)", 0.0)]
@@ -67,11 +69,31 @@ def _sort_value(text):
         return (1, 0.0, s.lower())
 
 
+def _attach_row_hover(tree):
+    """Highlight the row under the mouse with a faint amber wash, so it's always
+    obvious which row you're pointing at. Applied to every table in the app."""
+    tree.tag_configure("hover", background=theme.ROW_HOVER)
+
+    def set_hover(row):
+        prev = getattr(tree, "_hover_row", "")
+        if row == prev:
+            return
+        if prev and tree.exists(prev):  # un-hover the previous row
+            tree.item(prev, tags=[t for t in tree.item(prev, "tags") if t != "hover"])
+        if row:                         # hover the new one
+            tree.item(row, tags=list(tree.item(row, "tags")) + ["hover"])
+        tree._hover_row = row
+
+    tree.bind("<Motion>", lambda e: set_hover(tree.identify_row(e.y)), add="+")
+    tree.bind("<Leave>", lambda e: set_hover(""), add="+")
+
+
 def make_sortable(tree):
     """Make a Treeview's column headings click-to-sort, toggling asc/desc.
     Sorts the currently displayed rows; a later refresh restores natural order.
     Row iids are preserved (tree.move only reorders), so any code that maps an
     iid to a list index keeps working. Applied to every table in the app."""
+    _attach_row_hover(tree)
     state = {"col": None, "reverse": False}
 
     def sort_by(col):

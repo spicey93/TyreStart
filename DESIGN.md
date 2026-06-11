@@ -131,6 +131,22 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
   Pass `search_first=True` for a large/secondary list: the table loads empty and lists
   rows only once a term is entered, and the tab opens focused in the search box (instead
   of highlighting the first row).
+- **Date-filtered lists** use `self._make_date_filter(parent, on_change)` → `(frame,
+  get_range)`: a Period dropdown (presets in `core/daterange.PERIODS`) plus Start/End
+  boxes. Choosing a preset fills the boxes; editing a box switches to *Custom*.
+  `get_range()` returns parsed `(start, end)` dates; filter rows with
+  `daterange.in_range(row_date, start, end)`. Dates are `DD/MM/YY` text — parse via
+  `daterange.parse`. The supplier Payments/Purchases tabs pair this with extra
+  readonly filter combos (`_filter_combo`) for Method / Fully Allocated / Reconciled /
+  Paid.
+
+## Highlighting (focus & hover)
+- The focused widget always gets a **crisp white outline** (entries, combos, tables,
+  buttons — see `theme.FOCUS`). A table's selected row is **bright yellow when that
+  table has focus** and **dim amber when it doesn't** (`SELECT_BG` vs `SELECT_DIM`), so
+  it's clear both where you are and which table is live.
+- **Every table highlights the row under the mouse** with a faint amber wash
+  (`theme.ROW_HOVER`), wired centrally in `make_sortable` — no per-table code needed.
 
 ## Tables (lists)
 - `ttk.Treeview(show="headings")`. **Set each row's `iid` to the record's DB id** so
@@ -160,10 +176,29 @@ For a record that owns a list of sub-rows (e.g. a Purchase with product lines):
 - Header fields at the top (entity picker, status, reference, date) on a grid.
 - An **add-line strip**: a product **search box** (`query_products`, capped) → results
   `Combobox` → quantity + cost entries → **Add**. Don't load a huge table into a combobox.
-- A **lines `Treeview`** (`iid` = list index) with a **Remove line** button and a running
-  **Total** label; keep the working list in a Python `list` and rebuild the tree on change.
+- A **lines `Treeview`** (`iid` = list index) and a running **Total** label; keep the
+  working list in a Python `list` and rebuild the tree on change. Remove a line by
+  **pressing Delete on it or setting its Qty to 0** (no Remove-line button). The purchase
+  forms share one builder, `self._purchase_lines_editor(parent, editable=...)`.
 - Persist the parent + replace all child rows in one data-layer call
   (`create_purchase`/`update_purchase`).
+
+## Purchase documents (orders, invoices, credit notes)
+- The Purchases menu has **All Purchases · New Purchase Order · New Purchase Invoice ·
+  New Credit Note** (credit notes are a not-yet-built placeholder). Each document type
+  has its own form; `open_purchase(row)` routes an existing purchase to the right one by
+  `status`.
+- **Purchase Orders** capture supplier + date only and get an **auto PO number**
+  (`PO0001`, via `purchases.next_po_number`) stored in `reference`; status isn't shown.
+- **Receiving**: an Order's *Receive / Deliver* button opens a modal defaulting every
+  line to its full ordered qty (editable down). Confirming records `received` per line,
+  marks the PO `received` (locking it read-only), and **raises a linked Purchase Invoice**
+  for the received quantities — `purchases.receive_purchase(po_id, {item_id: qty}, date)`.
+  Stock comes in via that invoice (orders don't move stock), matching `product_stock`.
+- **Purchase Invoices** keep a **manually entered** invoice number (`reference`, the
+  supplier's number) plus an optional **PO Number** (`po_reference`) that links back to the
+  order. A raised invoice opens with the PO number pre-filled and the invoice-number box
+  focused for entry.
 
 ## Pickers
 - **Small/medium option set from the DB** (suppliers, nominal accounts): an

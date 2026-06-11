@@ -6,7 +6,9 @@ from ui import dialogs as messagebox
 from core import suppliers as db
 from core import payments as payment_db
 from core import purchases as purchase_db
+from core import daterange
 
+from ui import theme
 from ui.common import make_sortable
 
 
@@ -23,62 +25,46 @@ class SuppliersMixin:
             font=("Consolas", 20, "bold"),
         ).pack(side="left")
 
-        field_map = {
-            "Name": "name",
-            "Account #": "account_number",
-            "Contact": "contact",
-            "Email": "email",
-            "Phone": "phone",
-        }
-
+        # Two dedicated search boxes — Account # and Name — instead of one box
+        # plus a field dropdown. Either (or neither) may be filled; an empty box
+        # doesn't restrict, so searching works with no filters applied.
         search_frame = ttk.Frame(self.container)
         search_frame.pack(fill="x", pady=(0, 10))
-        # Let the search entry's column absorb any extra horizontal space.
-        search_frame.columnconfigure(1, weight=1)
 
-        search_term = tk.StringVar()
-        search_field = tk.StringVar(value="Name")
+        acc_term = tk.StringVar()
+        name_term = tk.StringVar()
 
-        ttk.Label(search_frame, text="Search:").grid(row=0, column=0, sticky="w")
-        search_entry = ttk.Entry(search_frame, textvariable=search_term)
-        search_entry.grid(row=0, column=1, sticky="ew", padx=(8, 10))
-        search_entry.focus_set()
-        search_entry.bind("<Return>", lambda e: do_search())
+        ttk.Label(search_frame, text="Account #:").grid(row=0, column=0, sticky="w")
+        acc_entry = ttk.Entry(search_frame, textvariable=acc_term, width=18)
+        acc_entry.grid(row=0, column=1, sticky="w", padx=(8, 16))
+        acc_entry.focus_set()
+        acc_entry.bind("<Return>", lambda e: do_search())
 
-        ttk.Label(search_frame, text="Filter:").grid(row=0, column=2, sticky="w")
-        filter_combo = ttk.Combobox(
-            search_frame,
-            state="readonly",
-            values=list(field_map.keys()),
-            textvariable=search_field,
-            width=12,
-        )
-        filter_combo.grid(row=0, column=3, sticky="w", padx=(8, 10))
-        filter_combo.current(0)
-
-        def get_rows():
-            return db.get_all_suppliers()
+        ttk.Label(search_frame, text="Name:").grid(row=0, column=2, sticky="w")
+        name_entry = ttk.Entry(search_frame, textvariable=name_term, width=28)
+        name_entry.grid(row=0, column=3, sticky="w", padx=(8, 16))
+        name_entry.bind("<Return>", lambda e: do_search())
 
         def refresh_tree():
-            query = search_term.get().strip().lower()
-            key = field_map[search_field.get()]
-            rows = get_rows()
+            acc = acc_term.get().strip().lower()
+            name = name_term.get().strip().lower()
             tree.delete(*tree.get_children())
-            for s in rows:
-                value = (s[key] or "").lower()
-                if not query or query in value:
-                    balance = payment_db.supplier_balance(s["id"])
-                    tree.insert(
-                        "",
-                        "end",
-                        iid=str(s["id"]),
-                        values=(
-                            s["name"], s["account_number"], s["contact"],
-                            s["email"], s["phone"], f"{balance:,.2f}",
-                        ),
-                    )
+            for s in db.get_all_suppliers():
+                if acc and acc not in (s["account_number"] or "").lower():
+                    continue
+                if name and name not in (s["name"] or "").lower():
+                    continue
+                balance = payment_db.supplier_balance(s["id"])
+                tree.insert(
+                    "", "end", iid=str(s["id"]),
+                    values=(
+                        s["name"], s["account_number"], s["status"] or "",
+                        s["phone"], f"{(s['credit_limit'] or 0):,.2f}",
+                        f"{balance:,.2f}",
+                    ),
+                )
             if not tree.get_children():
-                if query:
+                if acc or name:
                     status_label.config(text="No suppliers match the current search.")
                 else:
                     status_label.config(text="No suppliers yet. Use Create Supplier to add one.")
@@ -86,11 +72,10 @@ class SuppliersMixin:
                 status_label.config(text="")
 
         def clear_search():
-            search_term.set("")
-            search_field.set("Name")
-            filter_combo.current(0)
+            acc_term.set("")
+            name_term.set("")
             refresh_tree()
-            search_entry.focus_set()
+            acc_entry.focus_set()
 
         def do_search():
             """Run the search, then move keyboard focus to the first result (if any)."""
@@ -108,12 +93,13 @@ class SuppliersMixin:
         )
         ttk.Button(search_frame, text="Clear", command=clear_search).grid(row=0, column=5)
 
-        columns = ("name", "account_number", "contact", "email", "phone", "balance")
-        headings = ("Name", "Account #", "Contact", "Email", "Phone", "Balance")
+        columns = ("name", "account_number", "status", "phone", "credit_limit", "balance")
+        headings = ("Name", "Account #", "Status", "Phone", "Credit Limit", "Balance")
         tree = ttk.Treeview(self.container, columns=columns, show="headings")
         for col, heading in zip(columns, headings):
             tree.heading(col, text=heading)
             tree.column(col, width=130)
+        tree.column("credit_limit", anchor="e", width=100)
         tree.column("balance", anchor="e", width=100)
         make_sortable(tree)
         tree.pack(fill="both", expand=True)
@@ -186,20 +172,44 @@ class SuppliersMixin:
         notebook.add(details, text="Details")
 
         entries = {}
-        fields = [
-            ("name", "Name"),
-            ("account_number", "Account #"),
-            ("contact", "Contact"),
-            ("email", "Email"),
-            ("phone", "Phone"),
-        ]
-        for row, (key, label) in enumerate(fields):
-            ttk.Label(details, text=label + ":").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
-            entry = ttk.Entry(details, width=40)
-            entry.grid(row=row, column=1, pady=5)
-            if editing:
-                entry.insert(0, supplier[key] or "")
+
+        def add_field(key, label, row, col, fmt=None):
+            """A label + entry on the details grid. `col` 0 = left pair, 1 = right."""
+            ttk.Label(details, text=label + ":").grid(
+                row=row, column=col * 2, sticky="w", pady=5, padx=(24 if col else 0, 10))
+            entry = ttk.Entry(details, width=28)
+            entry.grid(row=row, column=col * 2 + 1, sticky="w", pady=5)
+            if editing and supplier[key] is not None:
+                entry.insert(0, fmt(supplier[key]) if fmt else supplier[key])
             entries[key] = entry
+            return entry
+
+        # Left column: the original contact details.
+        add_field("name", "Name", 0, 0)
+        add_field("account_number", "Account #", 1, 0)
+        add_field("contact", "Contact", 2, 0)
+        add_field("email", "Email", 3, 0)
+        add_field("phone", "Phone", 4, 0)
+
+        # Right column: account / accounting fields. Status and Payment method are
+        # dropdowns; the rest are entries.
+        status_var = tk.StringVar(value=(supplier["status"] if editing and supplier["status"] else "Open"))
+        ttk.Label(details, text="Status:").grid(row=0, column=2, sticky="w", pady=5, padx=(24, 10))
+        ttk.Combobox(details, state="readonly", width=26, textvariable=status_var,
+                     values=list(db.STATUSES)).grid(row=0, column=3, sticky="w", pady=5)
+
+        add_field("address", "Address", 1, 1)
+        add_field("postcode", "Postcode", 2, 1)
+        add_field("credit_limit", "Credit Limit", 3, 1, fmt=lambda v: f"{(v or 0):.2f}")
+        add_field("vat_code", "VAT Code", 4, 1)
+        add_field("vat_number", "VAT Number", 5, 1)
+
+        method_var = tk.StringVar(value=(supplier["payment_method"] if editing and supplier["payment_method"] else ""))
+        ttk.Label(details, text="Payment Method:").grid(row=6, column=2, sticky="w", pady=5, padx=(24, 10))
+        ttk.Combobox(details, state="readonly", width=26, textvariable=method_var,
+                     values=("", *payment_db.METHODS)).grid(row=6, column=3, sticky="w", pady=5)
+        ttk.Label(details, text="(used as the default when adding a payment)",
+                  style="Hint.TLabel").grid(row=7, column=2, columnspan=2, sticky="w")
 
         if editing:
             # --- Payments & Purchases tabs (existing supplier only) ---
@@ -214,15 +224,26 @@ class SuppliersMixin:
                 messagebox.showwarning("Missing name", "Please enter a supplier name.")
                 return None
             try:
+                credit = float(data["credit_limit"]) if data["credit_limit"] else 0.0
+            except ValueError:
+                messagebox.showwarning("Invalid credit limit", "Credit limit must be a number.")
+                return None
+            extra = dict(
+                status=status_var.get(), address=data["address"],
+                postcode=data["postcode"], credit_limit=credit,
+                vat_code=data["vat_code"], vat_number=data["vat_number"],
+                payment_method=method_var.get(),
+            )
+            try:
                 if editing:
                     db.update_supplier(
                         supplier["id"], data["name"], data["account_number"],
-                        data["contact"], data["email"], data["phone"],
+                        data["contact"], data["email"], data["phone"], **extra,
                     )
                     return supplier["id"]
                 return db.add_supplier(
                     data["name"], data["account_number"],
-                    data["contact"], data["email"], data["phone"],
+                    data["contact"], data["email"], data["phone"], **extra,
                 )
             except db.DuplicateNameError:
                 messagebox.showerror(
@@ -235,76 +256,162 @@ class SuppliersMixin:
         # Ctrl+1/Ctrl+2/… switch tabs (added after _register_form resets the list).
         self._bind_tab_shortcuts(notebook)
 
+    @staticmethod
+    def _filter_combo(bar, label, column, values):
+        """A labelled readonly filter combobox on `bar`'s row 0. Returns its var."""
+        ttk.Label(bar, text=label).grid(row=0, column=column, sticky="w", padx=(10, 6))
+        var = tk.StringVar(value=values[0])
+        combo = ttk.Combobox(bar, state="readonly", width=max(6, len(max(values, key=len))),
+                             textvariable=var, values=list(values))
+        combo.grid(row=0, column=column + 1, padx=(0, 4))
+        combo.current(0)
+        combo._ignore_dirty = True  # a filter, not a record field
+        return var, combo
+
+    @staticmethod
+    def _filtered_table(tab, columns, headings, widths, right_cols):
+        """Build a scrollable Treeview for a filtered tab; returns (tree, status)."""
+        table_frame = ttk.Frame(tab)
+        table_frame.pack(fill="both", expand=True)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        for col in right_cols:
+            tree.column(col, anchor="e")
+        make_sortable(tree)
+        status = ttk.Label(tab, text="")
+        status.pack(anchor="w", pady=(8, 0))
+        return tree, status
+
     def _build_supplier_payments_tab(self, notebook, supplier_id):
-        """Searchable list of the supplier's payments. Double-click (or Enter) a
-        payment to open its allocation screen, Delete to remove it; new payments
-        are made via the Suppliers → New Payment menu."""
+        """The supplier's payments, filtered by date period/range, method and
+        whether they're fully allocated. Double-click to allocate, Delete to remove."""
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="Payments")
         rows = payment_db.get_payments(supplier_id)
 
-        def cells(r):
-            return {
-                "date": r["date"] or "",
-                "account": f"{r['account_code']} - {r['account_name']}",
-                "method": r["method"] or "",
-                "amount": f"{r['amount']:,.2f}",
-                "unallocated": f"{r['unallocated']:,.2f}",
-                "invoices": r["invoices"] or "",
-            }
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x", pady=(0, 8))
+        date_frame, get_range = self._make_date_filter(bar, lambda: refresh())
+        date_frame.grid(row=0, column=0, sticky="w")
+        method_var, method_combo = self._filter_combo(
+            bar, "Method:", 1, ("All", *payment_db.METHODS))
+        alloc_var, alloc_combo = self._filter_combo(
+            bar, "Fully Allocated:", 3, ("All", "Yes", "No"))
+        method_combo.bind("<<ComboboxSelected>>", lambda e: refresh())
+        alloc_combo.bind("<<ComboboxSelected>>", lambda e: refresh())
 
-        def delete_payment(pid):
+        columns = ("date", "account", "method", "amount", "unallocated", "invoices")
+        headings = ("Date", "Account", "Method", "Amount", "Unallocated", "Invoices")
+        tree, status = self._filtered_table(
+            tab, columns, headings, (90, 150, 60, 80, 90, 180),
+            right_cols=("amount", "unallocated"))
+
+        def refresh():
+            start, end = get_range()
+            method, alloc = method_var.get(), alloc_var.get()
+            tree.delete(*tree.get_children())
+            shown = 0
+            for r in rows:
+                if not daterange.in_range(r["date"] or "", start, end):
+                    continue
+                if method != "All" and (r["method"] or "") != method:
+                    continue
+                fully = r["unallocated"] <= 0.005
+                if (alloc == "Yes" and not fully) or (alloc == "No" and fully):
+                    continue
+                tree.insert(
+                    "", "end", iid=str(r["id"]),
+                    values=(r["date"] or "", f"{r['account_code']} - {r['account_name']}",
+                            r["method"] or "", f"{r['amount']:,.2f}",
+                            f"{r['unallocated']:,.2f}", r["invoices"] or ""))
+                shown += 1
+            status.config(text=(f"Showing {shown} of {len(rows)} payment(s)."
+                                if rows else "No payments yet."))
+
+        def open_selected(event=None):
+            sel = tree.selection()
+            if sel:
+                self.show_payment_allocation(int(sel[0]))
+
+        def delete_selected(event=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            pid = int(sel[0])
             row = next((r for r in rows if r["id"] == pid), None)
             label = f"{row['date'] or ''} · {row['amount']:,.2f}" if row else str(pid)
             if messagebox.askyesno("Delete payment", f"Delete payment ({label})?"):
                 payment_db.delete_payment(pid)
-                # Rebuild the form so the Payments tab reflects the deletion.
                 self._form_dirty = False
                 self.show_supplier_form(db.get_supplier(supplier_id))
 
-        self._searchable_table(
-            tab,
-            columns=("date", "account", "method", "amount", "unallocated", "invoices"),
-            headings=("Date", "Account", "Method", "Amount", "Unallocated", "Invoices"),
-            rows=rows, cells=cells,
-            widths=(90, 150, 60, 80, 90, 180),
-            right_cols=("amount", "unallocated"),
-            field_labels=[("All", None), ("Date", "date"), ("Account", "account"),
-                          ("Method", "method"), ("Invoices", "invoices")],
-            empty_text="No payments yet.",
-            iid=lambda r: str(r["id"]),
-            on_open=self.show_payment_allocation,
-            on_delete=delete_payment,
-            search_first=True,
-        )
-        ttk.Label(
-            tab, text="Double-click to allocate · Delete to remove.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(4, 0))
+        tree.bind("<Double-1>", open_selected)
+        tree.bind("<Return>", open_selected)
+        tree.bind("<Delete>", delete_selected)
+        ttk.Label(tab, text="Double-click to allocate · Delete to remove.",
+                  style="Hint.TLabel").pack(anchor="w", pady=(4, 0))
+        refresh()
 
     def _build_supplier_purchases_tab(self, notebook, supplier_id):
-        """Searchable, read-only list of the supplier's purchases (orders/invoices)."""
+        """The supplier's purchases, filtered by date period/range, reconciled and
+        paid status. Double-click (or Enter) opens the purchase."""
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="Purchases")
         rows = purchase_db.supplier_purchases(supplier_id)
 
-        def cells(r):
-            return {
-                "reference": r["reference"] or "",
-                "status": r["status"],
-                "date": r["date"] or "",
-                "total": f"{r['total']:,.2f}",
-            }
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x", pady=(0, 8))
+        date_frame, get_range = self._make_date_filter(bar, lambda: refresh())
+        date_frame.grid(row=0, column=0, sticky="w")
+        rec_var, rec_combo = self._filter_combo(bar, "Reconciled:", 1, ("All", "Yes", "No"))
+        paid_var, paid_combo = self._filter_combo(bar, "Paid:", 3, ("All", "Yes", "No"))
+        rec_combo.bind("<<ComboboxSelected>>", lambda e: refresh())
+        paid_combo.bind("<<ComboboxSelected>>", lambda e: refresh())
 
-        self._searchable_table(
-            tab,
-            columns=("reference", "status", "date", "total"),
-            headings=("Reference", "Status", "Date", "Total"),
-            rows=rows, cells=cells,
-            widths=(150, 90, 110, 110),
-            right_cols=("total",),
-            field_labels=[("All", None), ("Reference", "reference"),
-                          ("Status", "status"), ("Date", "date")],
-            empty_text="No purchases yet.",
-            search_first=True,
-        )
+        columns = ("reference", "status", "date", "total", "paid", "reconciled")
+        headings = ("Reference", "Status", "Date", "Total", "Paid", "Reconciled")
+        tree, status = self._filtered_table(
+            tab, columns, headings, (140, 80, 90, 100, 50, 80), right_cols=("total",))
+
+        def is_paid(r):
+            return r["total"] > 0 and r["allocated"] >= r["total"] - 0.005
+
+        def refresh():
+            start, end = get_range()
+            want_rec, want_paid = rec_var.get(), paid_var.get()
+            tree.delete(*tree.get_children())
+            shown = 0
+            for r in rows:
+                if not daterange.in_range(r["date"] or "", start, end):
+                    continue
+                reconciled = bool(r["reconciled"])
+                if (want_rec == "Yes" and not reconciled) or (want_rec == "No" and reconciled):
+                    continue
+                paid = is_paid(r)
+                if (want_paid == "Yes" and not paid) or (want_paid == "No" and paid):
+                    continue
+                tree.insert(
+                    "", "end", iid=str(r["id"]),
+                    values=(r["reference"] or "", r["status"], r["date"] or "",
+                            f"{r['total']:,.2f}", "Yes" if paid else "No",
+                            "Yes" if reconciled else "No"))
+                shown += 1
+            status.config(text=(f"Showing {shown} of {len(rows)} purchase(s)."
+                                if rows else "No purchases yet."))
+
+        def open_selected(event=None):
+            sel = tree.selection()
+            if sel:
+                self.open_purchase(purchase_db.get_purchase(int(sel[0])))
+
+        tree.bind("<Double-1>", open_selected)
+        tree.bind("<Return>", open_selected)
+        ttk.Label(tab, text="Double-click or Enter to open a purchase.",
+                  style="Hint.TLabel").pack(anchor="w", pady=(4, 0))
+        refresh()

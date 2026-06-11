@@ -24,7 +24,9 @@ ACCENT = "#FFD500"      # bright yellow — buttons and selection (inverted)
 ACCENT_TEXT = "#000000" # black text drawn on yellow
 SELECT_BG = "#FFD500"   # selected row / active item: yellow bar
 SELECT_FG = "#000000"
+SELECT_DIM = "#6E5E00"  # selected row when its table is NOT focused (dim amber)
 FOCUS = "#FFFFFF"        # crisp white — outlines whatever widget has focus
+ROW_HOVER = "#3A3A00"   # row the mouse is over: faint amber wash
 
 # --- Fonts -------------------------------------------------------------------
 # "Consolas" ships on Windows; the family falls back gracefully elsewhere.
@@ -81,34 +83,47 @@ def apply(root):
     style.configure("TLabelframe.Label", background=BG, foreground=FG_BRIGHT,
                     font=FONT_SUBTITLE)
 
-    # Chunky yellow buttons with a raised retro bevel. The focused button gets a
-    # black dotted ring (focuscolor, visible on yellow) and a white border.
+    # Buttons rest dark (yellow-on-black, yellow outline); the focused or hovered
+    # button fills bright yellow with black text and a white outline, so the active
+    # button clearly stands out from the rest.
     style.configure("TButton",
-                    background=ACCENT, foreground=ACCENT_TEXT,
+                    background=BG, foreground=ACCENT,
                     bordercolor=FG, focuscolor=ACCENT_TEXT,
                     relief="raised", borderwidth=2, padding=(10, 4),
                     font=(FONT_FAMILY, 11, "bold"))
     style.map("TButton",
-              background=[("active", "#FFFFFF"), ("pressed", "#CCAA00")],
-              foreground=[("active", ACCENT_TEXT), ("pressed", ACCENT_TEXT)],
-              bordercolor=[("focus", FOCUS)],
+              background=[("pressed", "#CCAA00"), ("active", ACCENT), ("focus", ACCENT)],
+              foreground=[("pressed", ACCENT_TEXT), ("active", ACCENT_TEXT), ("focus", ACCENT_TEXT)],
+              bordercolor=[("focus", FOCUS), ("active", ACCENT)],
               lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)],
               relief=[("pressed", "sunken")])
 
     for widget in ("TEntry", "TCombobox", "TSpinbox"):
         style.configure(widget,
                         fieldbackground=FIELD_BG, background=FIELD_BG,
-                        foreground=FG, insertcolor=FG, bordercolor=BORDER,
+                        foreground=FG, insertcolor=ACCENT_TEXT, bordercolor=BORDER,
                         borderwidth=2, padding=2, arrowcolor=FG)
-        # A focused field gets a crisp white outline so it's unmistakable.
+        # Both hover (`active`) and keyboard focus (`focus`) invert the field to
+        # black-on-yellow; focus additionally gets the white outline. The caret is
+        # black (set above) so it's clearly visible on the yellow focused field.
         style.map(widget,
-                  bordercolor=[("focus", FOCUS)],
-                  lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)])
+                  foreground=[("active", ACCENT_TEXT), ("focus", ACCENT_TEXT)],
+                  fieldbackground=[("active", ACCENT), ("focus", ACCENT)],
+                  background=[("active", ACCENT), ("focus", ACCENT)],
+                  arrowcolor=[("active", ACCENT_TEXT), ("focus", ACCENT_TEXT)],
+                  bordercolor=[("focus", FOCUS), ("active", FOCUS)],
+                  lightcolor=[("focus", FOCUS), ("active", FOCUS)],
+                  darkcolor=[("focus", FOCUS), ("active", FOCUS)])
+    # The combobox needs `active`/`focus` listed before `readonly` so hover and
+    # focus win over the readonly styling.
     style.map("TCombobox",
-              fieldbackground=[("readonly", FIELD_BG)],
-              foreground=[("readonly", FG)],
-              bordercolor=[("focus", FOCUS)],
-              lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)],
+              foreground=[("active", ACCENT_TEXT), ("focus", ACCENT_TEXT), ("readonly", FG)],
+              fieldbackground=[("active", ACCENT), ("focus", ACCENT), ("readonly", FIELD_BG)],
+              background=[("active", ACCENT), ("focus", ACCENT)],
+              arrowcolor=[("active", ACCENT_TEXT), ("focus", ACCENT_TEXT)],
+              bordercolor=[("focus", FOCUS), ("active", FOCUS)],
+              lightcolor=[("focus", FOCUS), ("active", FOCUS)],
+              darkcolor=[("focus", FOCUS), ("active", FOCUS)],
               selectbackground=[("readonly", SELECT_BG)],
               selectforeground=[("readonly", SELECT_FG)])
     # The Combobox drop-down list (a classic Listbox) reads from these.
@@ -126,8 +141,12 @@ def apply(root):
     style.map("Treeview",
               bordercolor=[("focus", FOCUS)],
               lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)],
-              background=[("selected", SELECT_BG)],
-              foreground=[("selected", SELECT_FG)])
+              # Bright yellow selection when the table has focus; dim amber when it
+              # doesn't, so you can always see where you are but which table is live.
+              background=[("selected", "focus", SELECT_BG),
+                          ("selected", SELECT_DIM)],
+              foreground=[("selected", "focus", SELECT_FG),
+                          ("selected", FG)])
     style.configure("Treeview.Heading",
                     background=BG_RAISED, foreground=FG_BRIGHT,
                     bordercolor=BORDER, relief="raised",
@@ -153,4 +172,29 @@ def apply(root):
     style.map("TScrollbar", background=[("active", ACCENT)])
 
     style.configure("TCheckbutton", background=BG, foreground=FG)
+    style.map("TCheckbutton",
+              background=[("active", ACCENT)], foreground=[("active", ACCENT_TEXT)])
     style.configure("TMenubutton", background=ACCENT, foreground=ACCENT_TEXT)
+
+    _hover_invert(root)
+
+
+def _hover_invert(root):
+    """Force the `active` state on the field widgets while the mouse is over them.
+
+    Buttons and checkbuttons get `active` on hover automatically (clam), but
+    entries/comboboxes/spinboxes don't — so we toggle it ourselves. The styles
+    above map `active` to the inverted palette, giving every input/button a clear
+    black-on-yellow (or yellow-on-black) highlight under the cursor.
+    """
+    def enter(event):
+        widget = event.widget
+        if "disabled" not in widget.state():
+            widget.state(["active"])
+
+    def leave(event):
+        event.widget.state(["!active"])
+
+    for cls in ("TEntry", "TCombobox", "TSpinbox"):
+        root.bind_class(cls, "<Enter>", enter, add="+")
+        root.bind_class(cls, "<Leave>", leave, add="+")
