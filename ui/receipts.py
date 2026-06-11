@@ -1,7 +1,8 @@
-"""Customer-receipt screens (mixin for App)."""
+﻿"""Customer-receipt screens (mixin for App)."""
 import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import nominals
 from core import customers as customer_db
@@ -21,13 +22,13 @@ class ReceiptsMixin:
         header.pack(fill="x", pady=(0, 10))
         ttk.Label(
             header, text=f"Receipts — {customer['name']}",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(side="left")
 
         balance = receipt_db.customer_balance(customer_id)
         ttk.Label(
             self.container, text=f"Balance owed by customer: {balance:,.2f}",
-            font=("Segoe UI", 12, "bold"),
+            font=("Consolas", 12, "bold"),
         ).pack(anchor="w", pady=(0, 8))
 
         columns = ("date", "account", "method", "amount", "sales")
@@ -77,7 +78,7 @@ class ReceiptsMixin:
 
         ttk.Label(
             self.container, text="New Receipt",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
         customers = customer_db.get_all_customers()
@@ -122,14 +123,14 @@ class ReceiptsMixin:
         ttk.Entry(head, textvariable=date_var, width=22).grid(row=0, column=3, sticky="w", pady=6)
 
         ttk.Label(
-            self.container, text="Allocate to sales", font=("Segoe UI", 12, "bold"),
+            self.container, text="Allocate to sales", font=("Consolas", 12, "bold"),
         ).pack(anchor="w", pady=(15, 5))
 
         # The sale rows are rebuilt into this frame whenever the customer changes.
         alloc_frame = ttk.Frame(self.container)
         alloc_frame.pack(anchor="w", fill="x")
         total_label = ttk.Label(
-            self.container, text="Receipt total: 0.00", font=("Segoe UI", 10, "bold")
+            self.container, text="Receipt total: 0.00", font=("Consolas", 10, "bold")
         )
         total_label.pack(anchor="w", pady=(10, 0))
 
@@ -160,7 +161,7 @@ class ReceiptsMixin:
                 recompute()
                 return
             for col, text in enumerate(["Reference", "Date", "Total", "Outstanding", "Receive"]):
-                ttk.Label(alloc_frame, text=text, font=("Segoe UI", 9, "bold")).grid(
+                ttk.Label(alloc_frame, text=text, font=("Consolas", 9, "bold")).grid(
                     row=0, column=col, sticky="w", padx=(0, 12), pady=(0, 4)
                 )
             for i, s in enumerate(sales_list, start=1):

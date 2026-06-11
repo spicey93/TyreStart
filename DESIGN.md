@@ -8,9 +8,16 @@ add it here.
 - **Tkinter with `ttk` (themed) widgets** for everything user-facing — `ttk.Frame`,
   `ttk.Label`, `ttk.Entry`, `ttk.Button`, `ttk.Treeview`, `ttk.Combobox`.
   Use classic `tk` only where `ttk` has no equivalent (e.g. `tk.Menu`, `tk.StringVar`).
-- **Font:** `("Segoe UI", ...)`. Page titles are `("Segoe UI", 20, "bold")`.
-- No custom colors yet — we rely on the default ttk theme. If we introduce a palette
-  later, centralize it (don't hardcode colors per widget).
+- **Font:** `("Consolas", ...)` — a monospace face for the retro terminal look. Page
+  titles are `("Consolas", 20, "bold")`.
+- **Retro high-contrast theme.** The palette and all ttk styling live in `ui/theme.py`
+  (a black page, bright yellow text, yellow inverted chunky buttons — high contrast).
+  Whatever widget currently has keyboard focus is outlined in **crisp white**
+  (`theme.FOCUS`) against the soft-grey default border — entries, comboboxes, buttons
+  and tables alike — so it's always obvious where you are. `theme.apply(self)`
+  runs once in `App.__init__`, before any view is built. **Never hardcode hex colors per
+  widget** — pull a named color from `theme` (e.g. `theme.FG`, `theme.FG_MUTED`,
+  `theme.BORDER`) or use a named ttk style. Hint/secondary text uses `theme.FG_MUTED`.
 
 ## App structure
 - One window: a single `App(tk.Tk)` subclass.
@@ -58,11 +65,14 @@ add it here.
   idempotent. Map source columns explicitly (skip junk/constant columns).
 
 ## Navigation & menu bar
-- `Home` is a flat command (`Home [F1]` — top-level items don't render `accelerator=`,
-  so the shortcut goes in the label text).
+- **Custom in-window menu bar, not a native `tk.Menu`.** `_build_menu` builds a themed
+  `tk.Frame` of clickable labels packed at the top of the window (on Windows a native
+  menubar is OS-drawn and ignores the theme's colors). Each label highlights amber on
+  hover and carries its F-key in the text.
+- `Home` is a flat command (`Home [F1]` — the shortcut goes in the label text).
 - Each **section** (Suppliers / Products / Purchases / Services / Customers / Sales) is a
-  menubar **command** (not a native cascade) labelled with its F-key (`Suppliers [F2]`).
-  Clicking it — or pressing its F-key — opens a custom dropdown.
+  menubar label tagged with its F-key (`Suppliers [F2]`). Clicking it — or pressing its
+  F-key — opens a custom dropdown, which places itself directly under that label.
 - **Custom dropdown, not a native menu.** `_open_section(key)` shows an in-window overlay
   (a placed `tk.Frame` + `Listbox`) under the menubar, highlights the first item, and
   focuses it; navigate with **arrows + Enter** (Escape closes). It's an in-window overlay
@@ -71,8 +81,8 @@ add it here.
   take keyboard focus unreliably on Windows. Because the overlay stays in Tk's event loop,
   **pressing another F-key while one is open switches straight to it** (`bind_all` fires
   from the focused listbox). `_clear_container` closes any open overlay on view switch.
-- The single source of truth for section items is `_sections()` → `{key: (x_offset,
-  [(label, command), …])}`. No per-item accelerators, no separate `Ctrl+N`.
+- The single source of truth for section items is `_sections()` → `{key: [(label,
+  command), …]}`. No per-item accelerators, no separate `Ctrl+N`.
 - **No "+ New" buttons in page headers** — creation lives in the menu dropdown.
 
 ## Page header pattern
@@ -103,6 +113,10 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
 - Validation & feedback via `messagebox`: `showwarning` for missing required input,
   `showerror` for conflicts (e.g. duplicate name), `showinfo` on success. After a
   successful save, return to the list view.
+- **`messagebox` is our themed `ui/dialogs.py`, not `tkinter.messagebox`.** Native
+  message boxes are OS-drawn and ignore the theme, so each screen does
+  `from ui import dialogs as messagebox`; the module mirrors the standard API
+  (`showinfo`/`showwarning`/`showerror`/`askyesno`/`askyesnocancel`) and return values.
 
 ## Tabbed forms
 - Entity edit forms (suppliers, customers) use a `ttk.Notebook`. After
@@ -114,6 +128,9 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
   columns, headings, rows, cells, …)` (a `Search:` entry + `Filter:` column combo + the
   Treeview). Pass `iid=`/`on_open=`/`on_delete=` to make rows actionable. Its search
   widgets are tagged `_ignore_dirty` so typing in them never marks the edit form dirty.
+  Pass `search_first=True` for a large/secondary list: the table loads empty and lists
+  rows only once a term is entered, and the tab opens focused in the search box (instead
+  of highlighting the first row).
 
 ## Tables (lists)
 - `ttk.Treeview(show="headings")`. **Set each row's `iid` to the record's DB id** so
@@ -205,6 +222,8 @@ with allocations against it can't be deleted (FK), surfaced as a friendly error.
 - **Enter activates the focused button** app-wide: `bind_class("TButton", "<Return>", ...)`.
 - Global navigation shortcuts via `bind_all` (e.g. `F1` Home, `F2` Suppliers, `F3`
   Products, `F4` Purchases).
+- **The app opens windowed.** `F11` toggles full screen; `Ctrl+Q` quits (both confirm
+  via `_quit`).
 - **`Ctrl+N` is context-aware**: `_new_for_current_view()` opens the right create form
   for the current list (`suppliers`→supplier, `products`→product, `purchases`→purchase),
   keyed off `self.current_view`.

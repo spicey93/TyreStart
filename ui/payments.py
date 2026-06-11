@@ -1,7 +1,8 @@
-"""Supplier-payment screens (mixin for App)."""
+﻿"""Supplier-payment screens (mixin for App)."""
 import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import suppliers as db
 from core import purchases as purchase_db
@@ -21,13 +22,13 @@ class PaymentsMixin:
         header.pack(fill="x", pady=(0, 10))
         ttk.Label(
             header, text=f"Payments — {supplier['name']}",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(side="left")
 
         balance = payment_db.supplier_balance(supplier_id)
         ttk.Label(
             self.container, text=f"Balance owed: {balance:,.2f}",
-            font=("Segoe UI", 12, "bold"),
+            font=("Consolas", 12, "bold"),
         ).pack(anchor="w", pady=(0, 8))
 
         columns = ("date", "account", "method", "amount", "unallocated", "invoices")
@@ -101,7 +102,7 @@ class PaymentsMixin:
 
         ttk.Label(
             self.container, text="New Payment",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
         suppliers = db.get_all_suppliers()
@@ -157,7 +158,7 @@ class PaymentsMixin:
         ttk.Label(
             self.container,
             text="Enter the payment amount, then allocate it to invoices on the next screen.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(15, 0))
 
         def create_and_allocate():
@@ -203,20 +204,20 @@ class PaymentsMixin:
 
         ttk.Label(
             self.container, text=f"Allocate Payment — {supplier['name']}",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 8))
         ttk.Label(
             self.container,
             text=(f"Payment {payment['amount']:,.2f} · "
                   f"already allocated {payment['allocated']:,.2f} · "
                   f"unallocated {remaining:,.2f}"),
-            font=("Segoe UI", 11),
+            font=("Consolas", 11),
         ).pack(anchor="w", pady=(0, 12))
 
         ttk.Label(
             self.container,
             text="Tick a purchase to allocate against it (click the leftmost column).",
-            font=("Segoe UI", 12, "bold"),
+            font=("Consolas", 12, "bold"),
         ).pack(anchor="w", pady=(0, 5))
 
         invoices = purchase_db.supplier_invoices(payment["supplier_id"], outstanding_only=True)
@@ -241,7 +242,7 @@ class PaymentsMixin:
         tree.pack(side="left", fill="x", expand=True)
 
         remaining_label = ttk.Label(
-            self.container, text="", font=("Segoe UI", 10, "bold"),
+            self.container, text="", font=("Consolas", 10, "bold"),
         )
         remaining_label.pack(anchor="w", pady=(10, 0))
 
@@ -278,6 +279,7 @@ class PaymentsMixin:
                 del allocated[pid]
                 refresh_row(pid)
                 refresh_status()
+                self.mark_form_dirty()
                 return
             avail = free_amount()
             if avail <= 0:
@@ -299,6 +301,7 @@ class PaymentsMixin:
                 allocated[pid] = round(avail, 2)
             refresh_row(pid)
             refresh_status()
+            self.mark_form_dirty()
 
         def on_click(event):
             if tree.identify_region(event.x, event.y) != "cell":
@@ -326,6 +329,7 @@ class PaymentsMixin:
             for inv in invoices:
                 refresh_row(inv["id"])
             refresh_status()
+            self.mark_form_dirty()
 
         def save_allocations():
             allocations = [
@@ -333,18 +337,18 @@ class PaymentsMixin:
                 for pid, amount in allocated.items() if amount > 0
             ]
             payment_db.add_allocations(payment_id, allocations)
-            self.show_payments(payment["supplier_id"])
+            return True
 
         refresh_status()
 
-        buttons = ttk.Frame(self.container)
-        buttons.pack(anchor="w", pady=(20, 0))
-        ttk.Button(buttons, text="Save allocations", command=save_allocations).pack(side="left")
+        # Save-on-leave, like the rest of the app: navigating away (or Esc) offers
+        # to save the allocations — replacing the old Save/Allocate-later buttons.
+        back = lambda: self.show_payments(payment["supplier_id"])
+        self._register_form(save_allocations, back)
+
         if invoices:
-            ttk.Button(buttons, text="Suggest", command=suggest).pack(side="left", padx=(8, 0))
-        ttk.Button(
-            buttons, text="Allocate later",
-            command=lambda: self.show_payments(payment["supplier_id"]),
-        ).pack(side="left", padx=(8, 0))
+            buttons = ttk.Frame(self.container)
+            buttons.pack(anchor="w", pady=(20, 0))
+            ttk.Button(buttons, text="Suggest", command=suggest).pack(side="left")
 
     # ------------------------------------------------------------------- Services

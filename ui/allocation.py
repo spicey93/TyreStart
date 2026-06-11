@@ -1,6 +1,7 @@
-"""Shared product-allocation dialogs (used by products, purchases, sales)."""
+﻿"""Shared product-allocation dialogs (used by products, purchases, sales)."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import products as product_db
 from core import money
@@ -110,7 +111,7 @@ class AllocationMixin:
         else:
             # --- Basket ---
             ttk.Label(
-                win, text="Basket", font=("Segoe UI", 12, "bold")
+                win, text="Basket", font=("Consolas", 12, "bold")
             ).pack(anchor="w", padx=10)
             bframe = ttk.Frame(win, padding=(10, 0))
             bframe.pack(fill="both", expand=True)
@@ -135,7 +136,7 @@ class AllocationMixin:
             foot.pack(fill="x")
             ttk.Button(foot, text="Remove", command=lambda: remove_basket()).pack(side="left")
             total_lbl = ttk.Label(
-                foot, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
+                foot, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Consolas", 10, "bold")
             )
             total_lbl.pack(side="left", padx=(12, 0))
             ttk.Button(foot, text="Submit to Purchase", command=lambda: submit()).pack(side="right")

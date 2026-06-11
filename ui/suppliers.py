@@ -1,6 +1,7 @@
-"""Supplier screens (mixin for App)."""
+﻿"""Supplier screens (mixin for App)."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import suppliers as db
 from core import payments as payment_db
@@ -19,7 +20,7 @@ class SuppliersMixin:
         ttk.Label(
             header,
             text="Suppliers",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(side="left")
 
         field_map = {
@@ -153,7 +154,7 @@ class SuppliersMixin:
         ttk.Label(
             self.container,
             text="Double-click or Enter to edit · Delete key to remove the selected supplier.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(6, 0))
 
         refresh_tree()
@@ -174,7 +175,7 @@ class SuppliersMixin:
         ttk.Label(
             self.container,
             text="Edit Supplier" if editing else "Create Supplier",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
         notebook = ttk.Notebook(self.container)
@@ -274,10 +275,11 @@ class SuppliersMixin:
             iid=lambda r: str(r["id"]),
             on_open=self.show_payment_allocation,
             on_delete=delete_payment,
+            search_first=True,
         )
         ttk.Label(
             tab, text="Double-click to allocate · Delete to remove.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(4, 0))
 
     def _build_supplier_purchases_tab(self, notebook, supplier_id):
@@ -304,4 +306,5 @@ class SuppliersMixin:
             field_labels=[("All", None), ("Reference", "reference"),
                           ("Status", "status"), ("Date", "date")],
             empty_text="No purchases yet.",
+            search_first=True,
         )

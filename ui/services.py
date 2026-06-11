@@ -1,6 +1,7 @@
-"""Service screens (mixin for App)."""
+﻿"""Service screens (mixin for App)."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import services as service_db
 
@@ -15,7 +16,7 @@ class ServicesMixin:
         header = ttk.Frame(self.container)
         header.pack(fill="x", pady=(0, 10))
         ttk.Label(
-            header, text="Services", font=("Segoe UI", 20, "bold")
+            header, text="Services", font=("Consolas", 20, "bold")
         ).pack(side="left")
 
         bar = ttk.Frame(self.container)
@@ -111,7 +112,7 @@ class ServicesMixin:
         ttk.Label(
             self.container,
             text="Double-click or Enter for options (view / create sale) · Delete key to remove.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(4, 0))
 
         refresh()
@@ -124,7 +125,7 @@ class ServicesMixin:
         ttk.Label(
             self.container,
             text="Edit Service" if editing else "New Service",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
         form = ttk.LabelFrame(self.container, text="Service Details", padding=12)

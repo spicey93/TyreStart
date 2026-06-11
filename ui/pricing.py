@@ -1,6 +1,7 @@
-"""Pricing-rule screens (mixin for App)."""
+﻿"""Pricing-rule screens (mixin for App)."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import pricing as pricing_db
 
@@ -40,14 +41,14 @@ class PricingMixin:
 
         header = ttk.Frame(self.container)
         header.pack(fill="x", pady=(0, 10))
-        ttk.Label(header, text="Pricing Rules", font=("Segoe UI", 20, "bold")).pack(side="left")
+        ttk.Label(header, text="Pricing Rules", font=("Consolas", 20, "bold")).pack(side="left")
         ttk.Button(header, text="New Rule", command=self.show_pricing_rule_form).pack(side="right")
 
         ttk.Label(
             self.container,
             text="Rules turn a product's average cost into a retail price. Where "
             "several rules match, the most specific one (most conditions) wins.",
-            foreground="gray",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(0, 10))
 
         columns = ("name", "formula", "conditions")
@@ -95,7 +96,7 @@ class PricingMixin:
         ttk.Label(
             self.container,
             text="Select a rule and press Delete to remove it.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(10, 0))
         refresh()
 
@@ -104,7 +105,7 @@ class PricingMixin:
         self.current_view = "pricing_rule_form"
         self._clear_container()
         ttk.Label(
-            self.container, text="New Pricing Rule", font=("Segoe UI", 20, "bold")
+            self.container, text="New Pricing Rule", font=("Consolas", 20, "bold")
         ).pack(anchor="w", pady=(0, 15))
 
         name_var = tk.StringVar()
@@ -125,7 +126,7 @@ class PricingMixin:
         )
 
         # --- Variables ---
-        ttk.Label(form, text="Variables", font=("Segoe UI", 11, "bold")).grid(
+        ttk.Label(form, text="Variables", font=("Consolas", 11, "bold")).grid(
             row=1, column=0, columnspan=3, sticky="w", pady=(12, 4)
         )
         ttk.Label(form, text="Percentage uplift:").grid(row=2, column=0, sticky="w", pady=5, padx=(0, 10))
@@ -143,10 +144,10 @@ class PricingMixin:
         ).grid(row=4, column=1, columnspan=2, sticky="w", pady=5)
 
         # --- Conditions ---
-        ttk.Label(form, text="Conditions", font=("Segoe UI", 11, "bold")).grid(
+        ttk.Label(form, text="Conditions", font=("Consolas", 11, "bold")).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(12, 4)
         )
-        ttk.Label(form, text="(leave blank for no condition)", foreground="gray").grid(
+        ttk.Label(form, text="(leave blank for no condition)", foreground="#C9A227").grid(
             row=6, column=0, columnspan=3, sticky="w"
         )
         ttk.Label(form, text="Unit cost greater than:").grid(row=7, column=0, sticky="w", pady=5, padx=(0, 10))
