@@ -125,10 +125,11 @@ class SalesMixin:
 
         refresh()
 
-    def show_sale_form(self, sale=None, prefill_product=None):
+    def show_sale_form(self, sale=None, prefill_product=None, prefill_service=None):
         """Create/edit a sale with product and service line items.
-        `prefill_product` (a product row) starts a new sale with that product
-        already added — used when creating a sale straight from the product list."""
+        `prefill_product` (a product row) / `prefill_service` (a service row) starts
+        a new sale with that item already added — used when creating a sale straight
+        from the product or service list."""
         self.current_view = "sale_form"
         self._clear_container()
         editing = sale is not None
@@ -394,6 +395,15 @@ class SalesMixin:
                 "description": prefill_product["description"] or label,
                 "quantity": 1, "cost_price": price, "vat_rate": VAT_RATE_OPTIONS[0][1],
             }])
+        elif prefill_service is not None:
+            # Started from the service list: add it as a single line at its retail price.
+            receive_service({
+                "item_type": "service", "product_id": None,
+                "service_id": prefill_service["id"],
+                "description": prefill_service["service_name"], "quantity": 1,
+                "unit_price": prefill_service["retail_price"] or 0.0,
+                "vat_rate": VAT_RATE_OPTIONS[0][1],
+            })
 
     def open_new_customer_dialog(self, on_created):
         """Modal to create a customer; calls on_created(id, name) on success."""

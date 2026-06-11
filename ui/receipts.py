@@ -85,39 +85,41 @@ class ReceiptsMixin:
         accounts = nominals.get_all()
         account_by_label = {nominals.label(a): a["id"] for a in accounts}
 
-        head = ttk.Frame(self.container)
-        head.pack(anchor="w")
+        head = ttk.LabelFrame(self.container, text="Receipt Details", padding=12)
+        head.pack(anchor="w", fill="x")
         customer_var = tk.StringVar()
         account_var = tk.StringVar()
         method_var = tk.StringVar(value=receipt_db.METHODS[0])
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
 
-        ttk.Label(head, text="Customer:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 10))
+        # Left column: Customer / To account / Method.
+        ttk.Label(head, text="Customer:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
         customer_combo = ttk.Combobox(
             head, state="readonly", width=30, textvariable=customer_var,
             values=list(customer_by_label.keys()),
         )
-        customer_combo.grid(row=0, column=1, sticky="w", pady=4)
+        customer_combo.grid(row=0, column=1, sticky="w", pady=6)
 
-        ttk.Label(head, text="To account:").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 10))
+        ttk.Label(head, text="To account:").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
         account_combo = ttk.Combobox(
             head, state="readonly", width=30, textvariable=account_var,
             values=list(account_by_label.keys()),
         )
-        account_combo.grid(row=1, column=1, sticky="w", pady=4)
+        account_combo.grid(row=1, column=1, sticky="w", pady=6)
         if account_by_label:
             account_combo.current(0)
 
-        ttk.Label(head, text="Method:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 10))
+        ttk.Label(head, text="Method:").grid(row=2, column=0, sticky="w", pady=6, padx=(0, 10))
         method_combo = ttk.Combobox(
-            head, state="readonly", width=15, textvariable=method_var,
+            head, state="readonly", width=18, textvariable=method_var,
             values=list(receipt_db.METHODS),
         )
-        method_combo.grid(row=2, column=1, sticky="w", pady=4)
+        method_combo.grid(row=2, column=1, sticky="w", pady=6)
         method_combo.current(0)
 
-        ttk.Label(head, text="Date:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 10))
-        ttk.Entry(head, textvariable=date_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
+        # Right column: Date.
+        ttk.Label(head, text="Date:").grid(row=0, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=date_var, width=22).grid(row=0, column=3, sticky="w", pady=6)
 
         ttk.Label(
             self.container, text="Allocate to sales", font=("Segoe UI", 12, "bold"),

@@ -50,13 +50,15 @@ def create_table():
         )
 
 
-def create_payment(supplier_id, nominal_account_id, method, date, allocations):
-    """Record a payment and its invoice allocations. Returns the new payment id.
+def create_payment(supplier_id, nominal_account_id, method, date, amount, allocations=None):
+    """Record a payment for `amount`. Returns the new payment id.
 
-    `allocations` is a list of {"purchase_id", "amount"}; the payment's total
-    amount is the sum of the allocated amounts.
+    The payment amount is entered manually and is independent of any
+    allocations: a payment may be created with no allocations and allocated to
+    invoices later (see `add_allocations`). `allocations`, when given, is a list
+    of {"purchase_id", "amount"} applied immediately.
     """
-    amount = round(sum(a["amount"] for a in allocations), 2)
+    amount = round(amount, 2)
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO payments "
@@ -65,23 +67,63 @@ def create_payment(supplier_id, nominal_account_id, method, date, allocations):
             (supplier_id, nominal_account_id, method, date, amount, _now()),
         )
         payment_id = cursor.lastrowid
+        if allocations:
+            conn.executemany(
+                "INSERT INTO payment_allocations (payment_id, purchase_id, amount) "
+                "VALUES (?, ?, ?)",
+                [(payment_id, a["purchase_id"], a["amount"]) for a in allocations],
+            )
+        return payment_id
+
+
+def add_allocations(payment_id, allocations):
+    """Allocate part (or all) of an existing payment to invoices.
+
+    `allocations` is a list of {"purchase_id", "amount"}; each call appends new
+    allocation rows, so a payment can be allocated over several visits.
+    """
+    if not allocations:
+        return
+    with get_connection() as conn:
         conn.executemany(
             "INSERT INTO payment_allocations (payment_id, purchase_id, amount) "
             "VALUES (?, ?, ?)",
             [(payment_id, a["purchase_id"], a["amount"]) for a in allocations],
         )
-        return payment_id
+
+
+def delete_payment(payment_id):
+    """Delete a payment and (via ON DELETE CASCADE) its allocations."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM payments WHERE id = ?", (payment_id,))
+
+
+def get_payment(payment_id):
+    """A single payment with its account label and the amount allocated so far."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT p.id, p.supplier_id, p.nominal_account_id, p.date, p.method, "
+            "p.amount, n.code AS account_code, n.name AS account_name, "
+            "COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa "
+            "          WHERE pa.payment_id = p.id), 0) AS allocated "
+            "FROM payments p JOIN nominal_accounts n ON n.id = p.nominal_account_id "
+            "WHERE p.id = ?",
+            (payment_id,),
+        ).fetchone()
 
 
 def get_payments(supplier_id):
-    """Return a supplier's payments, with account label and allocated invoices."""
+    """Return a supplier's payments, with account label, allocated invoices, and
+    the amount still unallocated."""
     with get_connection() as conn:
         return conn.execute(
             "SELECT p.id, p.date, p.method, p.amount, "
             "n.code AS account_code, n.name AS account_name, "
             "(SELECT GROUP_CONCAT(pu.reference, ', ') FROM payment_allocations pa "
             "   JOIN purchases pu ON pu.id = pa.purchase_id "
-            "   WHERE pa.payment_id = p.id) AS invoices "
+            "   WHERE pa.payment_id = p.id) AS invoices, "
+            "p.amount - COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa "
+            "   WHERE pa.payment_id = p.id), 0) AS unallocated "
             "FROM payments p JOIN nominal_accounts n ON n.id = p.nominal_account_id "
             "WHERE p.supplier_id = ? ORDER BY p.id DESC",
             (supplier_id,),

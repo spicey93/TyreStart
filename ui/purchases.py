@@ -143,9 +143,9 @@ class PurchasesMixin:
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
-        # --- Header fields ---
-        head = ttk.Frame(self.container)
-        head.pack(anchor="w")
+        # --- Header fields (bordered panel; mirrors the Sale form's layout) ---
+        head = ttk.LabelFrame(self.container, text="Purchase Details", padding=12)
+        head.pack(anchor="w", fill="x")
         supplier_by_name = {s["name"]: s["id"] for s in db.get_all_suppliers()}
 
         supplier_var = tk.StringVar()
@@ -153,23 +153,25 @@ class PurchasesMixin:
         reference_var = tk.StringVar()
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
 
-        ttk.Label(head, text="Supplier:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 10))
-        supplier_combo = AutocompleteCombobox(head, textvariable=supplier_var, width=37)
+        # Left column: Supplier / Status.
+        ttk.Label(head, text="Supplier:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
+        supplier_combo = AutocompleteCombobox(head, textvariable=supplier_var, width=30)
         supplier_combo.set_completion_list(list(supplier_by_name.keys()))
-        supplier_combo.grid(row=0, column=1, sticky="w", pady=4)
+        supplier_combo.grid(row=0, column=1, sticky="w", pady=6)
         supplier_combo.focus_set()  # target the supplier picker on load
 
-        ttk.Label(head, text="Status:").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 10))
+        ttk.Label(head, text="Status:").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
         ttk.Combobox(
-            head, state="readonly", width=15, textvariable=status_var,
+            head, state="readonly", width=18, textvariable=status_var,
             values=list(purchase_db.STATUSES),
-        ).grid(row=1, column=1, sticky="w", pady=4)
+        ).grid(row=1, column=1, sticky="w", pady=6)
 
-        ttk.Label(head, text="Reference:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 10))
-        ttk.Entry(head, textvariable=reference_var, width=40).grid(row=2, column=1, sticky="w", pady=4)
+        # Right column: Reference / Date.
+        ttk.Label(head, text="Reference:").grid(row=0, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=reference_var, width=24).grid(row=0, column=3, sticky="w", pady=6)
 
-        ttk.Label(head, text="Date:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 10))
-        ttk.Entry(head, textvariable=date_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(head, text="Date:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=date_var, width=24).grid(row=1, column=3, sticky="w", pady=6)
 
         # --- Line items: added via the Product Allocation window ---
         prod_header = ttk.Frame(self.container)
@@ -193,12 +195,12 @@ class PurchasesMixin:
         lt_frame = ttk.Frame(self.container)
         lt_frame.pack(fill="both", expand=True, pady=(8, 0))
         lines_tree = ttk.Treeview(
-            lt_frame, columns=("product", "qty", "cost", "vat", "total"),
+            lt_frame, columns=("stock_code", "description", "qty", "cost", "vat", "total"),
             show="headings", height=6,
         )
         for col, heading, width, anchor in [
-            ("product", "Product", 300, "w"), ("qty", "Qty", 50, "e"),
-            ("cost", "Cost", 90, "e"), ("vat", "VAT", 60, "e"),
+            ("stock_code", "Stock Code", 130, "w"), ("description", "Description", 260, "w"),
+            ("qty", "Qty", 50, "e"), ("cost", "Cost", 90, "e"), ("vat", "VAT", 60, "e"),
             ("total", "Line Total", 100, "e"),
         ]:
             lines_tree.heading(col, text=heading)
@@ -237,8 +239,8 @@ class PurchasesMixin:
                 gross_total += gross
                 lines_tree.insert(
                     "", "end", iid=str(index),
-                    values=(ln["label"], ln["quantity"], f"{ln['cost_price']:.2f}",
-                            f"{ln['vat_rate']:.0f}%", f"{gross:,.2f}"),
+                    values=(ln["stock_code"], ln["description"], ln["quantity"],
+                            f"{ln['cost_price']:.2f}", f"{ln['vat_rate']:.0f}%", f"{gross:,.2f}"),
                 )
             total_label.config(
                 text=f"Net {net_total:,.2f}   VAT {vat_total:,.2f}   Gross {gross_total:,.2f}"
@@ -248,11 +250,11 @@ class PurchasesMixin:
             """Double-click the Qty or Cost cell to edit it inline."""
             if lines_tree.identify("region", event.x, event.y) != "cell":
                 return
-            column = lines_tree.identify_column(event.x)  # '#1'..'#5'
+            column = lines_tree.identify_column(event.x)  # '#1'..'#6'
             rowid = lines_tree.identify_row(event.y)
-            if not rowid or column not in ("#2", "#3"):  # only Qty (#2) / Cost (#3)
+            if not rowid or column not in ("#3", "#4"):  # only Qty (#3) / Cost (#4)
                 return
-            key = "quantity" if column == "#2" else "cost_price"
+            key = "quantity" if column == "#3" else "cost_price"
             index = int(rowid)
             bbox = lines_tree.bbox(rowid, column)
             if not bbox:
@@ -325,7 +327,8 @@ class PurchasesMixin:
             for it in purchase_db.get_purchase_items(purchase["id"]):
                 lines.append({
                     "product_id": it["product_id"],
-                    "label": f"{it['stock_code']} — {it['description']}",
+                    "stock_code": it["stock_code"],
+                    "description": it["description"],
                     "quantity": it["quantity"],
                     "cost_price": it["cost_price"],
                     "vat_rate": it["vat_rate"],

@@ -78,7 +78,7 @@ class SupplierBalanceTests(DatabaseTestCase):
 
     def test_balance_is_invoiced_minus_payments(self):
         self.assertEqual(payments.supplier_balance(self.supplier), 110.0)
-        payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02",
+        payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02", 40.0,
                                 [{"purchase_id": self.purchase, "amount": 40.0}])
         self.assertEqual(payments.supplier_balance(self.supplier), 70.0)
 
@@ -88,14 +88,14 @@ class SupplierBalanceTests(DatabaseTestCase):
         self.assertEqual(payments.supplier_balance(self.supplier), 110.0)  # order excluded
 
     def test_outstanding_per_invoice(self):
-        payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02",
+        payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02", 40.0,
                                 [{"purchase_id": self.purchase, "amount": 40.0}])
         rows = purchases.supplier_invoices(self.supplier)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["outstanding"], 70.0)
 
     def test_outstanding_only_filters_settled(self):
-        payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02",
+        payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02", 110.0,
                                 [{"purchase_id": self.purchase, "amount": 110.0}])  # fully paid
         self.assertEqual(purchases.supplier_invoices(self.supplier, outstanding_only=True), [])
 

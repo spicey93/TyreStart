@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox
 
 from core import database
 
+from ui.common import make_sortable
 from ui.suppliers import SuppliersMixin
 from ui.products import ProductsMixin
 from ui.pricing import PricingMixin
@@ -208,18 +209,170 @@ class App(
         self._form_save = save
 
         def on_key(event):
+            # Widgets tagged `_ignore_dirty` (e.g. in-form search bars) don't count
+            # as edits to the record being saved.
+            if getattr(event.widget, "_ignore_dirty", False):
+                return
             if event.keysym not in self._NAV_KEYS and not event.keysym.startswith("F"):
                 self._form_dirty = True
         self._form_shortcuts.append(("<Key>", self.bind("<Key>", on_key, add="+")))
+
+        def on_combo(event):
+            if not getattr(event.widget, "_ignore_dirty", False):
+                self.mark_form_dirty()
         self._form_shortcuts.append((
-            "<<ComboboxSelected>>",
-            self.bind("<<ComboboxSelected>>", lambda e: self.mark_form_dirty(), add="+"),
+            "<<ComboboxSelected>>", self.bind("<<ComboboxSelected>>", on_combo, add="+"),
         ))
 
         def leave(_event):
             self._go(back)
             return "break"
         self._form_shortcuts.append(("<Escape>", self.bind("<Escape>", leave)))
+
+    def _bind_tab_shortcuts(self, notebook):
+        """Bind Ctrl+1, Ctrl+2, … to select the matching tab of `notebook`, label
+        each tab with its shortcut, and focus the first item of a tab when it's
+        shown.
+
+        Registered alongside the current form's shortcuts so they're cleared on
+        the next view switch. Call after `_register_form` (which resets the list).
+        """
+        for index, tab_id in enumerate(notebook.tabs()):
+            seq = f"<Control-Key-{index + 1}>"
+            notebook.tab(tab_id, text=f"{notebook.tab(tab_id, 'text')} (Ctrl+{index + 1})")
+
+            def select(_event, idx=index):
+                notebook.select(idx)
+                return "break"
+
+            funcid = self.bind(seq, select)
+            self._form_shortcuts.append((seq, funcid))
+
+        # Highlight the first item of whichever tab becomes visible.
+        notebook.bind(
+            "<<NotebookTabChanged>>",
+            lambda e: self.after_idle(lambda: self._focus_tab(notebook)),
+        )
+
+    def _focus_tab(self, notebook):
+        """Focus the first item of the notebook's current tab: a table's first row
+        if it has one, else the first entry/combobox, else the first button."""
+        selected = notebook.select()
+        if not selected:
+            return
+        frame = notebook.nametowidget(selected)
+        tree = self._first_descendant(frame, (ttk.Treeview,))
+        if tree is not None:
+            tree.focus_set()
+            children = tree.get_children()
+            if children:
+                tree.selection_set(children[0])
+                tree.focus(children[0])
+                tree.see(children[0])
+            return
+        target = (self._first_descendant(frame, (ttk.Entry, ttk.Combobox))
+                  or self._first_descendant(frame, (ttk.Button,)))
+        if target is not None:
+            target.focus_set()
+
+    def _searchable_table(self, parent, columns, headings, rows, cells,
+                          widths=None, right_cols=(), field_labels=None,
+                          empty_text="No records.", iid=None,
+                          on_open=None, on_delete=None, height=8):
+        """Build a search/filter bar above a Treeview inside `parent`.
+
+        - `rows`: source records; `cells(r)` returns {column_id: display string}.
+        - `field_labels`: (label, column_id|None) pairs for the Filter combo — a
+          None column searches every column. Defaults to All + one per column.
+        - `iid(r)`: the tree iid for a row (enables `on_open`/`on_delete`, which
+          receive the selected int iid on double-click/Enter and Delete).
+        Returns the Treeview.
+        """
+        field_labels = field_labels or ([("All", None)]
+                                        + [(h, c) for c, h in zip(columns, headings)])
+        field_map = dict(field_labels)
+
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", pady=(0, 8))
+        bar.columnconfigure(1, weight=1)
+        search_var = tk.StringVar()
+        field_var = tk.StringVar(value=field_labels[0][0])
+        ttk.Label(bar, text="Search:").grid(row=0, column=0, sticky="w")
+        entry = ttk.Entry(bar, textvariable=search_var)
+        entry.grid(row=0, column=1, sticky="ew", padx=(8, 10))
+        ttk.Label(bar, text="Filter:").grid(row=0, column=2, sticky="w")
+        field_combo = ttk.Combobox(
+            bar, state="readonly", width=12, textvariable=field_var,
+            values=[label for label, _ in field_labels],
+        )
+        field_combo.grid(row=0, column=3, sticky="w", padx=(8, 10))
+        field_combo.current(0)
+        # These belong to a search bar, not the record — don't dirty an edit form.
+        entry._ignore_dirty = field_combo._ignore_dirty = True
+        ttk.Button(bar, text="Search", command=lambda: refresh()).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(bar, text="Clear", command=lambda: clear()).grid(row=0, column=5)
+
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=height)
+        sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        widths = widths or [120] * len(columns)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        for col in right_cols:
+            tree.column(col, anchor="e")
+        make_sortable(tree)
+
+        status = ttk.Label(parent, text="")
+        status.pack(anchor="w", pady=(8, 0))
+
+        prepared = [(iid(r) if iid else None, cells(r)) for r in rows]
+
+        def refresh():
+            query = search_var.get().strip().lower()
+            col = field_map[field_var.get()]
+            tree.delete(*tree.get_children())
+            shown = 0
+            for row_iid, c in prepared:
+                hay = (" ".join(c[k] for k in columns) if col is None else c[col]).lower()
+                if not query or query in hay:
+                    kwargs = {"iid": row_iid} if row_iid is not None else {}
+                    tree.insert("", "end", values=tuple(c[k] for k in columns), **kwargs)
+                    shown += 1
+            if not rows:
+                status.config(text=empty_text)
+            elif shown == 0:
+                status.config(text="No matches for the current search.")
+            else:
+                status.config(text=f"Showing {shown} of {len(rows)}.")
+
+        def clear():
+            search_var.set("")
+            field_var.set(field_labels[0][0])
+            field_combo.current(0)
+            refresh()
+            entry.focus_set()
+
+        def act(fn):
+            selection = tree.selection()
+            if selection:
+                fn(int(selection[0]))
+            return "break"
+
+        entry.bind("<Return>", lambda e: refresh())
+        field_combo.bind("<<ComboboxSelected>>", lambda e: refresh())
+        if on_open:
+            tree.bind("<Double-1>", lambda e: act(on_open))
+            tree.bind("<Return>", lambda e: act(on_open))
+        if on_delete:
+            tree.bind("<Delete>", lambda e: act(on_delete))
+
+        refresh()
+        return tree
 
     def _unbind_form_shortcuts(self):
         for sequence, funcid in getattr(self, "_form_shortcuts", []):

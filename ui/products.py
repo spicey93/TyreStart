@@ -260,8 +260,8 @@ class ProductsMixin:
             self.container, text="New Product", font=("Segoe UI", 20, "bold")
         ).pack(anchor="w", pady=(0, 15))
 
-        form = ttk.Frame(self.container)
-        form.pack(anchor="w")
+        form = ttk.LabelFrame(self.container, text="Product Details", padding=12)
+        form.pack(anchor="w", fill="x")
         fields = [
             ("description", "Description"),
             ("brand", "Brand"),
