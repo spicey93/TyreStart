@@ -90,12 +90,30 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
 ## Forms (create / edit share one view)
 - One method handles both create and edit (`show_supplier_form(supplier=None)`); the
   title switches between `Create <Thing>` / `Edit <Thing>` and fields pre-fill when editing.
+- **Header/detail fields go in a bordered `ttk.LabelFrame(text="<Thing> Details", padding=12)`**
+  packed `anchor="w", fill="x"` — e.g. *Sale Details*, *Purchase Details*, *Payment
+  Details*, *Receipt Details*, *Product Details*, *Service Details*. Documents with four-ish
+  header fields use a **two-column** grid inside it: the primary picker + status on the left
+  (columns 0/1), reference/date (and amount) on the right (columns 2/3, label `padx=(30, 10)`),
+  rows on `pady=6`. Tabbed entity forms (suppliers, customers) keep their fields on the
+  notebook's `Details` tab, which is itself the bordered container.
 - Layout: `ttk.Label` + `ttk.Entry` pairs on a grid — label in column 0
   (`sticky="w"`, `padx=(0, 10)`), entry in column 1, `pady=5`.
 - **Save** button below the form, `anchor="w"`, `pady=(20, 0)`.
 - Validation & feedback via `messagebox`: `showwarning` for missing required input,
   `showerror` for conflicts (e.g. duplicate name), `showinfo` on success. After a
   successful save, return to the list view.
+
+## Tabbed forms
+- Entity edit forms (suppliers, customers) use a `ttk.Notebook`. After
+  `_register_form`, call `self._bind_tab_shortcuts(notebook)`: it binds
+  **Ctrl+1 / Ctrl+2 / …** to the tabs, **appends the shortcut to each tab label**
+  (e.g. `Details (Ctrl+1)`), and on every tab change **focuses the first item** of the
+  shown tab — the first row of its table if it has one, else its first entry.
+- **List-style tabs get a search/filter bar** built with `self._searchable_table(parent,
+  columns, headings, rows, cells, …)` (a `Search:` entry + `Filter:` column combo + the
+  Treeview). Pass `iid=`/`on_open=`/`on_delete=` to make rows actionable. Its search
+  widgets are tagged `_ignore_dirty` so typing in them never marks the edit form dirty.
 
 ## Tables (lists)
 - `ttk.Treeview(show="headings")`. **Set each row's `iid` to the record's DB id** so

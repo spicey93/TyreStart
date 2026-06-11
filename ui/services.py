@@ -86,7 +86,12 @@ class ServicesMixin:
             if not selection:
                 messagebox.showinfo("No selection", "Please select a service first.")
                 return
-            self.show_service_form(service_db.get_service(int(selection[0])))
+            service_id = int(selection[0])
+            action = self.ask_product_action("service")
+            if action == "view":
+                self.show_service_form(service_db.get_service(service_id))
+            elif action == "sale":
+                self.show_sale_form(prefill_service=service_db.get_service(service_id))
 
         def delete_selected(event=None):
             selection = tree.selection()
@@ -105,7 +110,7 @@ class ServicesMixin:
 
         ttk.Label(
             self.container,
-            text="Double-click or Enter to edit · Delete key to remove the selected service.",
+            text="Double-click or Enter for options (view / create sale) · Delete key to remove.",
             foreground="#666666",
         ).pack(anchor="w", pady=(4, 0))
 
@@ -122,8 +127,8 @@ class ServicesMixin:
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
-        form = ttk.Frame(self.container)
-        form.pack(anchor="w")
+        form = ttk.LabelFrame(self.container, text="Service Details", padding=12)
+        form.pack(anchor="w", fill="x")
         fields = [
             ("service_code", "Service Code"),
             ("service_name", "Service Name"),

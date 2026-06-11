@@ -66,11 +66,15 @@ class SuppliersMixin:
             for s in rows:
                 value = (s[key] or "").lower()
                 if not query or query in value:
+                    balance = payment_db.supplier_balance(s["id"])
                     tree.insert(
                         "",
                         "end",
                         iid=str(s["id"]),
-                        values=(s["name"], s["account_number"], s["contact"], s["email"], s["phone"]),
+                        values=(
+                            s["name"], s["account_number"], s["contact"],
+                            s["email"], s["phone"], f"{balance:,.2f}",
+                        ),
                     )
             if not tree.get_children():
                 if query:
@@ -103,12 +107,13 @@ class SuppliersMixin:
         )
         ttk.Button(search_frame, text="Clear", command=clear_search).grid(row=0, column=5)
 
-        columns = ("name", "account_number", "contact", "email", "phone")
-        headings = ("Name", "Account #", "Contact", "Email", "Phone")
+        columns = ("name", "account_number", "contact", "email", "phone", "balance")
+        headings = ("Name", "Account #", "Contact", "Email", "Phone", "Balance")
         tree = ttk.Treeview(self.container, columns=columns, show="headings")
         for col, heading in zip(columns, headings):
             tree.heading(col, text=heading)
             tree.column(col, width=130)
+        tree.column("balance", anchor="e", width=100)
         make_sortable(tree)
         tree.pack(fill="both", expand=True)
 
@@ -196,14 +201,7 @@ class SuppliersMixin:
             entries[key] = entry
 
         if editing:
-            balance = payment_db.supplier_balance(supplier["id"])
-            ttk.Label(
-                details,
-                text=f"Balance owed: {balance:,.2f}",
-                font=("Segoe UI", 12, "bold"),
-            ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(14, 0))
-
-            # --- Payments & Purchases tabs (read-only; existing supplier only) ---
+            # --- Payments & Purchases tabs (existing supplier only) ---
             self._build_supplier_payments_tab(notebook, supplier["id"])
             self._build_supplier_purchases_tab(notebook, supplier["id"])
 
@@ -233,55 +231,77 @@ class SuppliersMixin:
                 return None
 
         self._register_form(save=save, back=self.show_all_suppliers)
+        # Ctrl+1/Ctrl+2/… switch tabs (added after _register_form resets the list).
+        self._bind_tab_shortcuts(notebook)
 
     def _build_supplier_payments_tab(self, notebook, supplier_id):
-        """Read-only list of the supplier's payments (new payments are made via
-        the Suppliers → New Payment menu)."""
+        """Searchable list of the supplier's payments. Double-click (or Enter) a
+        payment to open its allocation screen, Delete to remove it; new payments
+        are made via the Suppliers → New Payment menu."""
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="Payments")
-        columns = ("date", "account", "method", "amount", "invoices")
-        headings = ("Date", "Account", "Method", "Amount", "Invoices")
-        widths = (90, 160, 70, 90, 200)
-        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
-        for col, heading, width in zip(columns, headings, widths):
-            tree.heading(col, text=heading)
-            tree.column(col, width=width)
-        tree.column("amount", anchor="e")
-        make_sortable(tree)
-        tree.pack(fill="both", expand=True)
         rows = payment_db.get_payments(supplier_id)
-        for r in rows:
-            tree.insert(
-                "", "end",
-                values=(
-                    r["date"] or "", f"{r['account_code']} - {r['account_name']}",
-                    r["method"] or "", f"{r['amount']:,.2f}", r["invoices"] or "",
-                ),
-            )
+
+        def cells(r):
+            return {
+                "date": r["date"] or "",
+                "account": f"{r['account_code']} - {r['account_name']}",
+                "method": r["method"] or "",
+                "amount": f"{r['amount']:,.2f}",
+                "unallocated": f"{r['unallocated']:,.2f}",
+                "invoices": r["invoices"] or "",
+            }
+
+        def delete_payment(pid):
+            row = next((r for r in rows if r["id"] == pid), None)
+            label = f"{row['date'] or ''} · {row['amount']:,.2f}" if row else str(pid)
+            if messagebox.askyesno("Delete payment", f"Delete payment ({label})?"):
+                payment_db.delete_payment(pid)
+                # Rebuild the form so the Payments tab reflects the deletion.
+                self._form_dirty = False
+                self.show_supplier_form(db.get_supplier(supplier_id))
+
+        self._searchable_table(
+            tab,
+            columns=("date", "account", "method", "amount", "unallocated", "invoices"),
+            headings=("Date", "Account", "Method", "Amount", "Unallocated", "Invoices"),
+            rows=rows, cells=cells,
+            widths=(90, 150, 60, 80, 90, 180),
+            right_cols=("amount", "unallocated"),
+            field_labels=[("All", None), ("Date", "date"), ("Account", "account"),
+                          ("Method", "method"), ("Invoices", "invoices")],
+            empty_text="No payments yet.",
+            iid=lambda r: str(r["id"]),
+            on_open=self.show_payment_allocation,
+            on_delete=delete_payment,
+        )
         ttk.Label(
-            tab, text=(f"{len(rows)} payment(s)." if rows else "No payments yet."),
-        ).pack(anchor="w", pady=(8, 0))
+            tab, text="Double-click to allocate · Delete to remove.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(4, 0))
 
     def _build_supplier_purchases_tab(self, notebook, supplier_id):
-        """Read-only list of the supplier's purchases (orders and invoices)."""
+        """Searchable, read-only list of the supplier's purchases (orders/invoices)."""
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="Purchases")
-        columns = ("reference", "status", "date", "total")
-        headings = ("Reference", "Status", "Date", "Total")
-        widths = (150, 90, 110, 110)
-        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
-        for col, heading, width in zip(columns, headings, widths):
-            tree.heading(col, text=heading)
-            tree.column(col, width=width)
-        tree.column("total", anchor="e")
-        make_sortable(tree)
-        tree.pack(fill="both", expand=True)
         rows = purchase_db.supplier_purchases(supplier_id)
-        for r in rows:
-            tree.insert(
-                "", "end",
-                values=(r["reference"] or "", r["status"], r["date"] or "", f"{r['total']:,.2f}"),
-            )
-        ttk.Label(
-            tab, text=(f"{len(rows)} purchase(s)." if rows else "No purchases yet."),
-        ).pack(anchor="w", pady=(8, 0))
+
+        def cells(r):
+            return {
+                "reference": r["reference"] or "",
+                "status": r["status"],
+                "date": r["date"] or "",
+                "total": f"{r['total']:,.2f}",
+            }
+
+        self._searchable_table(
+            tab,
+            columns=("reference", "status", "date", "total"),
+            headings=("Reference", "Status", "Date", "Total"),
+            rows=rows, cells=cells,
+            widths=(150, 90, 110, 110),
+            right_cols=("total",),
+            field_labels=[("All", None), ("Reference", "reference"),
+                          ("Status", "status"), ("Date", "date")],
+            empty_text="No purchases yet.",
+        )

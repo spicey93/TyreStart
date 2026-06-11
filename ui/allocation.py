@@ -232,6 +232,7 @@ class AllocationMixin:
                 # Add qty 1 at the rule price and return straight to the sale.
                 on_submit([{
                     "product_id": product["id"], "label": label,
+                    "stock_code": product["stock_code"],
                     "description": product["description"] or label,
                     "quantity": 1, "cost_price": price_fn(product) if price_fn else 0.0,
                     "vat_rate": VAT_RATE_OPTIONS[0][1],
@@ -245,6 +246,7 @@ class AllocationMixin:
             quantity, cost, vat_rate = qc
             basket.append({
                 "product_id": product["id"], "label": label,
+                "stock_code": product["stock_code"],
                 "description": product["description"] or label,
                 "quantity": quantity, "cost_price": cost, "vat_rate": vat_rate,
             })
@@ -290,17 +292,18 @@ class AllocationMixin:
 
         stock_entry.focus_set()
 
-    def ask_product_action(self):
-        """Ask whether to view the product or start a sale for it.
+    def ask_product_action(self, noun="product"):
+        """Ask whether to view the record or start a sale for it.
+        `noun` ("product"/"service") sets the wording.
         Returns "view", "sale", or None if cancelled."""
         dialog = tk.Toplevel(self)
-        dialog.title("Product")
+        dialog.title(noun.title())
         dialog.transient(self)
         dialog.grab_set()
         result = {"value": None}
 
         ttk.Label(
-            dialog, text="What would you like to do with this product?", padding=15
+            dialog, text=f"What would you like to do with this {noun}?", padding=15
         ).pack(anchor="w")
         btns = ttk.Frame(dialog, padding=(15, 0, 15, 15))
         btns.pack(fill="x")
@@ -309,7 +312,7 @@ class AllocationMixin:
             result["value"] = value
             dialog.destroy()
 
-        view_btn = ttk.Button(btns, text="View Product", command=lambda: choose("view"))
+        view_btn = ttk.Button(btns, text=f"View {noun.title()}", command=lambda: choose("view"))
         view_btn.pack(side="left")
         ttk.Button(btns, text="Create Sale", command=lambda: choose("sale")).pack(
             side="left", padx=(8, 0)

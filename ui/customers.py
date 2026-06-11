@@ -185,57 +185,61 @@ class CustomersMixin:
                 return None
 
         self._register_form(save=save, back=self.show_customers)
+        # Ctrl+1/Ctrl+2/… switch tabs (added after _register_form resets the list).
+        self._bind_tab_shortcuts(notebook)
 
     def _build_customer_receipts_tab(self, notebook, customer_id):
-        """Read-only list of the customer's receipts (new receipts are recorded
-        via the Customers → New Receipt menu)."""
+        """Searchable, read-only list of the customer's receipts (new receipts are
+        recorded via the Customers → New Receipt menu)."""
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="Receipts")
-        columns = ("date", "account", "method", "amount", "sales")
-        headings = ("Date", "Account", "Method", "Amount", "Sales")
-        widths = (90, 160, 70, 90, 200)
-        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
-        for col, heading, width in zip(columns, headings, widths):
-            tree.heading(col, text=heading)
-            tree.column(col, width=width)
-        tree.column("amount", anchor="e")
-        make_sortable(tree)
-        tree.pack(fill="both", expand=True)
         rows = receipt_db.get_receipts(customer_id)
-        for r in rows:
-            tree.insert(
-                "", "end",
-                values=(
-                    r["date"] or "", f"{r['account_code']} - {r['account_name']}",
-                    r["method"] or "", f"{r['amount']:,.2f}", r["sales"] or "",
-                ),
-            )
-        ttk.Label(
-            tab, text=(f"{len(rows)} receipt(s)." if rows else "No receipts yet."),
-        ).pack(anchor="w", pady=(8, 0))
+
+        def cells(r):
+            return {
+                "date": r["date"] or "",
+                "account": f"{r['account_code']} - {r['account_name']}",
+                "method": r["method"] or "",
+                "amount": f"{r['amount']:,.2f}",
+                "sales": r["sales"] or "",
+            }
+
+        self._searchable_table(
+            tab,
+            columns=("date", "account", "method", "amount", "sales"),
+            headings=("Date", "Account", "Method", "Amount", "Sales"),
+            rows=rows, cells=cells,
+            widths=(90, 160, 70, 90, 200),
+            right_cols=("amount",),
+            field_labels=[("All", None), ("Date", "date"), ("Account", "account"),
+                          ("Method", "method"), ("Sales", "sales")],
+            empty_text="No receipts yet.",
+        )
 
     def _build_customer_sales_tab(self, notebook, customer_id):
-        """Read-only list of the customer's sales (quotes, orders and invoices)."""
+        """Searchable, read-only list of the customer's sales (quotes/orders/invoices)."""
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="Sales")
-        columns = ("reference", "status", "date", "total")
-        headings = ("Reference", "Status", "Date", "Total")
-        widths = (150, 90, 110, 110)
-        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
-        for col, heading, width in zip(columns, headings, widths):
-            tree.heading(col, text=heading)
-            tree.column(col, width=width)
-        tree.column("total", anchor="e")
-        make_sortable(tree)
-        tree.pack(fill="both", expand=True)
         rows = sale_db.list_for_customer(customer_id)
-        for r in rows:
-            tree.insert(
-                "", "end",
-                values=(r["reference"] or "", r["status"], r["date"] or "", f"{r['total']:,.2f}"),
-            )
-        ttk.Label(
-            tab, text=(f"{len(rows)} sale(s)." if rows else "No sales yet."),
-        ).pack(anchor="w", pady=(8, 0))
+
+        def cells(r):
+            return {
+                "reference": r["reference"] or "",
+                "status": r["status"],
+                "date": r["date"] or "",
+                "total": f"{r['total']:,.2f}",
+            }
+
+        self._searchable_table(
+            tab,
+            columns=("reference", "status", "date", "total"),
+            headings=("Reference", "Status", "Date", "Total"),
+            rows=rows, cells=cells,
+            widths=(150, 90, 110, 110),
+            right_cols=("total",),
+            field_labels=[("All", None), ("Reference", "reference"),
+                          ("Status", "status"), ("Date", "date")],
+            empty_text="No sales yet.",
+        )
 
     # ---------------------------------------------------------------------- Sales
