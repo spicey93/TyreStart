@@ -38,8 +38,15 @@ class App(
     def __init__(self):
         super().__init__()
         self.title("Stock System")
-        self.geometry("1000x550")
-        # Open windowed; F11 toggles full screen, Ctrl+Q quits the app.
+        # Open maximised with a sensible floor, so data-entry pages have room.
+        # (The geometry is the size the window restores to if un-maximised.)
+        self.geometry("1100x700")
+        self.minsize(900, 600)
+        try:
+            self.state("zoomed")  # maximise on Windows
+        except tk.TclError:
+            self.attributes("-zoomed", True)  # X11 fallback
+        # F11 toggles full screen, Ctrl+Q quits the app.
         self.bind_all("<F11>", lambda e: self.attributes(
             "-fullscreen", not self.attributes("-fullscreen")))
         self.bind_all("<Control-q>", lambda e: self._quit())
@@ -507,11 +514,43 @@ class App(
         # navigating away from a plain list view never prompts.
         self._form_dirty = False
         self._form_save = None
+        self.unbind_all("<MouseWheel>")  # drop any scroll binding from a scrollable body
         for widget in self.container.winfo_children():
             widget.destroy()
         # Once the new view has been built (next idle), focus its first interactive
         # widget so every screen is keyboard-ready on load.
         self.after_idle(self._focus_first_input)
+
+    def _scrollable_body(self):
+        """Return a frame to build a tall form/detail page into, inside a
+        vertically-scrolling area of the content container, so the page never
+        clips when the window is short. The body fills the available width and a
+        scrollbar appears only when the content is taller than the viewport.
+
+        For stacked form/detail pages — NOT list pages, whose Treeview already
+        scrolls and should fill the viewport. Cleaned up by `_clear_container`
+        (it destroys the canvas) on the next view switch."""
+        canvas = tk.Canvas(self.container, highlightthickness=0, background=theme.BG)
+        vbar = ttk.Scrollbar(self.container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        body = ttk.Frame(canvas)
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        # Content height drives the scroll region; canvas width drives the body
+        # width (so horizontal `fill="x"` layouts still stretch).
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(window, width=e.width))
+
+        # Mouse-wheel scrolls while the pointer is over the area.
+        def on_wheel(event):
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+        canvas.bind("<Enter>", lambda e: self.bind_all("<MouseWheel>", on_wheel))
+        canvas.bind("<Leave>", lambda e: self.unbind_all("<MouseWheel>"))
+        return body
 
     def _focus_first_input(self):
         """Focus the first interactive widget in the current view: an entry/combo

@@ -178,7 +178,7 @@ def get_brands():
 
 # Columns the New Product form offers as add-able dropdowns; whitelisted so the
 # column name can be interpolated into get_distinct_values' SQL safely.
-DROPDOWN_COLUMNS = ("brand", "model", "product_type", "vehicle_type")
+DROPDOWN_COLUMNS = ("brand", "model", "product_type", "vehicle_type", "product_group")
 
 
 def get_distinct_values(column):
@@ -219,9 +219,14 @@ def get_models(brand="", size_prefix=""):
 def create_product(description, brand="", model="", ean="", manufacturer_code="",
                    product_type="", vehicle_type="", rolling_resistance="", wet_grip="",
                    noise_class="", noise_performance="", vehicle_class="",
-                   pricing_key="", product_group=""):
-    """Insert a manually-created product. Stock code/size are derived. Returns id."""
-    width, aspect_ratio, rim = parse_size(description)
+                   pricing_key="", product_group="",
+                   width="", aspect_ratio="", rim=""):
+    """Insert a manually-created product. The Stock Code is derived from the size +
+    brand + manufacturer code. Size (width/aspect/rim) is taken from the explicit
+    arguments when given (the form's dropdowns), else parsed from the description.
+    Returns the new id."""
+    if not (width and aspect_ratio and rim):
+        width, aspect_ratio, rim = parse_size(description)
     stock_code = build_stock_code(width, aspect_ratio, rim, brand, manufacturer_code)
     today = datetime.date.today().strftime("%d/%m/%y")
     with get_connection() as conn:
@@ -238,6 +243,33 @@ def create_product(description, brand="", model="", ean="", manufacturer_code=""
              pricing_key, product_group),
         )
         return cursor.lastrowid
+
+
+def update_product(product_id, description, brand="", model="", ean="",
+                   manufacturer_code="", product_type="", vehicle_type="",
+                   rolling_resistance="", wet_grip="", noise_class="",
+                   noise_performance="", vehicle_class="", pricing_key="",
+                   product_group="", width="", aspect_ratio="", rim=""):
+    """Update an existing product's editable fields. Recomputes size + Stock Code
+    (size from the explicit args when given, else parsed from the description) and
+    bumps updated_date; created_date is left untouched. Returns the product_id."""
+    if not (width and aspect_ratio and rim):
+        width, aspect_ratio, rim = parse_size(description)
+    stock_code = build_stock_code(width, aspect_ratio, rim, brand, manufacturer_code)
+    today = datetime.date.today().strftime("%d/%m/%y")
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE products SET description=?, ean=?, manufacturer_code=?, brand=?, "
+            "model=?, product_type=?, vehicle_type=?, rolling_resistance=?, wet_grip=?, "
+            "noise_class=?, noise_performance=?, vehicle_class=?, updated_date=?, "
+            "width=?, aspect_ratio=?, rim=?, stock_code=?, pricing_key=?, product_group=? "
+            "WHERE id=?",
+            (description, ean, manufacturer_code, brand, model, product_type, vehicle_type,
+             rolling_resistance, wet_grip, noise_class, noise_performance, vehicle_class,
+             today, width, aspect_ratio, rim, stock_code, pricing_key, product_group,
+             product_id),
+        )
+    return product_id
 
 
 # Current stock = invoiced purchases (minus credit-noted returns) - sold quantities
@@ -391,3 +423,102 @@ def get_product(product_id):
         return conn.execute(
             "SELECT * FROM products WHERE id = ?", (product_id,)
         ).fetchone()
+
+
+# --- Data cleanup -------------------------------------------------------------
+# The catalogue was bulk-imported and carries messy/invalid values in the
+# categorical columns (mixed case, stray whitespace, junk like 'POR'/'TBA'/'-').
+# clean_data() normalises them in place and blanks out anything not valid. Valid
+# ranges: EU tyre-label ratings A-G; noise class as letters A/B/C (converted from
+# the old wave-bar numbers 1/2/3); noise performance as dB 65-80; vehicle class
+# C1/C2/C3; product type seasonal-only; brand/model/vehicle-type upper-cased.
+
+_RATINGS = {"A", "B", "C", "D", "E", "F", "G"}
+_NOISE_CLASS_MAP = {"1": "A", "2": "B", "3": "C", "A": "A", "B": "B", "C": "C"}
+_VEHICLE_CLASSES = {"C1", "C2", "C3"}
+
+
+def _norm_ws(value):
+    """Trim and collapse internal whitespace; None -> ''."""
+    return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def _clean_upper(value):
+    return _norm_ws(value).upper()
+
+
+def _clean_product_type(value):
+    t = _clean_upper(value)
+    if "ALL SEASON" in t or "ALLSEASON" in t:
+        return "ALL SEASON"
+    if "SUMMER" in t:
+        return "SUMMER"
+    if "WINTER" in t:
+        return "WINTER"
+    return ""  # HT / AT / Sand / SPARE / junk -> blank (seasonal-only)
+
+
+def _clean_rating(value):
+    t = _clean_upper(value)
+    return t if t in _RATINGS else ""
+
+
+def _clean_noise_class(value):
+    return _NOISE_CLASS_MAP.get(_clean_upper(value), "")
+
+
+def _clean_noise_performance(value):
+    t = _norm_ws(value)
+    if t.isdigit() and 65 <= int(t) <= 80:
+        return str(int(t))  # strips leading zeros, e.g. '072' -> '72'
+    return ""
+
+
+def _clean_vehicle_class(value):
+    t = _clean_upper(value)
+    return t if t in _VEHICLE_CLASSES else ""
+
+
+# Column -> cleaner. Order is cosmetic.
+COLUMN_CLEANERS = {
+    "brand": _clean_upper,
+    "model": _clean_upper,
+    "vehicle_type": _clean_upper,
+    "product_type": _clean_product_type,
+    "rolling_resistance": _clean_rating,
+    "wet_grip": _clean_rating,
+    "noise_class": _clean_noise_class,
+    "noise_performance": _clean_noise_performance,
+    "vehicle_class": _clean_vehicle_class,
+}
+
+
+def clean_data():
+    """Normalise/clean the categorical product columns in place. Idempotent —
+    running it again is a no-op. Returns {column: rows_changed}. Works per
+    distinct value (a few hundred UPDATEs total), so it's fast over the catalogue."""
+    summary = {}
+    with get_connection() as conn:
+        for column, clean in COLUMN_CLEANERS.items():
+            rows = conn.execute(
+                f"SELECT DISTINCT {column} AS v FROM products"
+            ).fetchall()
+            changed = 0
+            for row in rows:
+                raw = row["v"]
+                target = clean(raw)
+                if (raw or "") == target:
+                    continue  # already clean
+                if raw is None:
+                    cursor = conn.execute(
+                        f"UPDATE products SET {column} = ? WHERE {column} IS NULL",
+                        (target,),
+                    )
+                else:
+                    cursor = conn.execute(
+                        f"UPDATE products SET {column} = ? WHERE {column} = ?",
+                        (target, raw),
+                    )
+                changed += cursor.rowcount
+            summary[column] = changed
+    return summary

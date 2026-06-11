@@ -13,7 +13,7 @@ the products table (see `products.get_distinct_values`).
 from core.database import get_connection
 
 # The fields that have an add-able dropdown. Used to validate `category`.
-CATEGORIES = ("brand", "model", "product_type", "vehicle_type")
+CATEGORIES = ("brand", "model", "product_type", "vehicle_type", "product_group")
 
 
 class DuplicateValueError(Exception):

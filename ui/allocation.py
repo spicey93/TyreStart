@@ -293,10 +293,10 @@ class AllocationMixin:
 
         stock_entry.focus_set()
 
-    def ask_product_action(self, noun="product"):
-        """Ask whether to view the record or start a sale for it.
-        `noun` ("product"/"service") sets the wording.
-        Returns "view", "sale", or None if cancelled."""
+    def ask_product_action(self, noun="product", allow_edit=False):
+        """Ask whether to view the record, edit it, or start a sale for it.
+        `noun` ("product"/"service") sets the wording; `allow_edit` adds an Edit
+        button. Returns "view", "edit", "sale", or None if cancelled."""
         dialog = tk.Toplevel(self)
         dialog.title(noun.title())
         dialog.transient(self)
@@ -315,6 +315,9 @@ class AllocationMixin:
 
         view_btn = ttk.Button(btns, text=f"View {noun.title()}", command=lambda: choose("view"))
         view_btn.pack(side="left")
+        if allow_edit:
+            ttk.Button(btns, text=f"Edit {noun.title()}",
+                       command=lambda: choose("edit")).pack(side="left", padx=(8, 0))
         ttk.Button(btns, text="Create Sale", command=lambda: choose("sale")).pack(
             side="left", padx=(8, 0)
         )

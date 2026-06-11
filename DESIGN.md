@@ -64,6 +64,12 @@ add it here.
 - **Bulk imports** (e.g. a CSV catalogue) live in the entity module as an
   `import_from_csv(path, replace=True)` function — replace-on-reload so re-running is
   idempotent. Map source columns explicitly (skip junk/constant columns).
+- **Data cleanup** of an imported catalogue lives in the entity module as an
+  **idempotent** `clean_data()` (e.g. `products.clean_data()`): per-distinct-value
+  `UPDATE`s that normalise case/whitespace and blank out invalid values, keyed by a
+  `COLUMN_CLEANERS` map. It returns `{column: rows_changed}` and a second run is a no-op.
+  Valid ranges are defined as constants (tyre-label ratings A–G, noise class A/B/C,
+  noise dB 65–80, vehicle class C1–C3). **Back up `app.db` first** and dry-run on a copy.
 
 ## Navigation & menu bar
 - **Custom in-window menu bar, not a native `tk.Menu`.** `_build_menu` builds a themed
@@ -168,8 +174,19 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
 - The status label reports the cap honestly: *"Showing first 200 of 6,160 matches —
   narrow your search to see more."* (Never silently truncate.)
 - Give the table a vertical `ttk.Scrollbar` (wrap tree + scrollbar in their own frame).
-- Records that aren't user-editable get a **read-only detail view** (a labelled grid +
-  a `Back to <List>` button) instead of the create/edit form.
+- Records that aren't user-editable get a **read-only detail view** instead of the
+  create/edit form. **Mirror the create form's layout** — same panels, same two-column
+  field order — but render every field as a **read-only input** (`ttk.Entry`/`Combobox`
+  with `state="readonly"`), so view and create read as the same screen. Derived figures
+  that don't exist at creation time (stock, average cost, price) and import metadata go in
+  a **separate panel** below (e.g. *Stock & Pricing*). End the view with an **Edit <Thing>**
+  button (opens the create/edit form pre-filled) beside `Back to <List>`.
+  See `products.show_product_detail` / `show_product_form`.
+- **Create/edit share one method even for catalogue records** with a read-only view:
+  `show_product_form(product=None)` — `None` creates, a row edits (title swaps New/Edit,
+  fields pre-fill, save routes to `create_product`/`update_product`). Pre-filling via
+  `StringVar.set` doesn't mark the form dirty, so it opens clean. The list's row-action
+  dialog (`ask_product_action(allow_edit=True)`) offers View / Edit / Create Sale.
 
 ## Derived data
 - Computed fields (e.g. a Stock Code parsed/assembled from other columns) are produced
