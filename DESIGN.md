@@ -109,6 +109,12 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
   notebook's `Details` tab, which is itself the bordered container.
 - Layout: `ttk.Label` + `ttk.Entry` pairs on a grid — label in column 0
   (`sticky="w"`, `padx=(0, 10)`), entry in column 1, `pady=5`.
+- **Actions panel**: a form with action buttons (Add Product/Service, Create payment,
+  Suggest, Receive, Create Credit Note, …) groups them in a bordered
+  `ttk.LabelFrame(text="Actions", padding=8)` packed `fill="x"` **directly under the
+  Details panel and above the lines/allocation table** — never loose at the bottom of the
+  page. Buttons pack left-to-right. Used on the sale, purchase (order/invoice/credit note),
+  payment and payment-allocation forms.
 - **Save** button below the form, `anchor="w"`, `pady=(20, 0)`.
 - Validation & feedback via `messagebox`: `showwarning` for missing required input,
   `showerror` for conflicts (e.g. duplicate name), `showinfo` on success. After a

@@ -196,11 +196,11 @@ class PaymentsMixin:
             )
             self.show_payment_allocation(payment_id)
 
-        buttons = ttk.Frame(self.container)
-        buttons.pack(anchor="w", pady=(20, 0))
-        ttk.Button(buttons, text="Create payment", command=create_and_allocate).pack(side="left")
+        actions = ttk.LabelFrame(self.container, text="Actions", padding=8)
+        actions.pack(fill="x", pady=(20, 0))
+        ttk.Button(actions, text="Create payment", command=create_and_allocate).pack(side="left")
         ttk.Button(
-            buttons, text="Cancel", command=self.show_all_suppliers,
+            actions, text="Cancel", command=self.show_all_suppliers,
         ).pack(side="left", padx=(8, 0))
 
     def show_payment_allocation(self, payment_id):
@@ -360,8 +360,8 @@ class PaymentsMixin:
         self._register_form(save_allocations, back)
 
         if invoices:
-            buttons = ttk.Frame(self.container)
-            buttons.pack(anchor="w", pady=(20, 0))
-            ttk.Button(buttons, text="Suggest", command=suggest).pack(side="left")
+            actions = ttk.LabelFrame(self.container, text="Actions", padding=8)
+            actions.pack(fill="x", pady=(20, 0))
+            ttk.Button(actions, text="Suggest", command=suggest).pack(side="left")
 
     # ------------------------------------------------------------------- Services

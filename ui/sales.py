@@ -205,22 +205,13 @@ class SalesMixin:
         ttk.Label(head, text="Date:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
         ttk.Entry(head, textvariable=date_var, width=22).grid(row=1, column=3, sticky="w", pady=6)
 
+        # --- Actions panel (buttons grouped under the details panel) ---
+        actions = ttk.LabelFrame(self.container, text="Actions", padding=8)
+        actions.pack(fill="x", pady=(12, 0))
+
         # --- Line items (products + services) ---
-        items_header = ttk.Frame(self.container)
-        items_header.pack(fill="x", pady=(15, 5))
-        ttk.Label(items_header, text="Items", font=("Consolas", 12, "bold")).pack(side="left")
-        ttk.Button(
-            items_header, text="Add Product",
-            command=lambda: self.open_product_allocation(
-                receive_products, "Unit Price (net)",
-                price_fn=lambda p: pricing_db.price_for_product(p["id"]),
-                stock_filter=True, quick_add=True,
-            ),
-        ).pack(side="left", padx=(12, 0))
-        ttk.Button(
-            items_header, text="Add Service",
-            command=lambda: self.open_service_picker(receive_service),
-        ).pack(side="left", padx=(8, 0))
+        ttk.Label(self.container, text="Items", font=("Consolas", 12, "bold")).pack(
+            anchor="w", pady=(15, 5))
 
         lines = []  # dicts: item_type, product_id, service_id, description, quantity, unit_price, vat_rate
 
@@ -241,6 +232,19 @@ class SalesMixin:
             refresh_lines()
             self.mark_form_dirty()
 
+        ttk.Button(
+            actions, text="Add Product",
+            command=lambda: self.open_product_allocation(
+                receive_products, "Unit Price (net)",
+                price_fn=lambda p: pricing_db.price_for_product(p["id"]),
+                stock_filter=True, quick_add=True,
+            ),
+        ).pack(side="left")
+        ttk.Button(
+            actions, text="Add Service",
+            command=lambda: self.open_service_picker(receive_service),
+        ).pack(side="left", padx=(8, 0))
+
         lt_frame = ttk.Frame(self.container)
         lt_frame.pack(fill="both", expand=True, pady=(8, 0))
         lines_tree = ttk.Treeview(
@@ -260,21 +264,15 @@ class SalesMixin:
         ls.pack(side="right", fill="y")
         lines_tree.pack(side="left", fill="both", expand=True)
 
-        bottom = ttk.Frame(self.container)
-        bottom.pack(fill="x", pady=(6, 0))
-        ttk.Button(bottom, text="Remove line", command=lambda: remove_line()).pack(side="left")
         total_label = ttk.Label(
-            bottom, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Consolas", 10, "bold")
+            self.container, text="Net 0.00   VAT 0.00   Gross 0.00",
+            font=("Consolas", 10, "bold")
         )
-        total_label.pack(side="right")
-
-        def remove_line():
-            selection = lines_tree.selection()
-            if not selection:
-                return
-            del lines[int(selection[0])]
-            refresh_lines()
-            self.mark_form_dirty()
+        total_label.pack(anchor="e", pady=(6, 0))
+        ttk.Label(
+            self.container, style="Hint.TLabel",
+            text="Double-click Qty/Unit Price to edit · set Qty to 0 or press Delete to remove a line.",
+        ).pack(anchor="w", pady=(4, 0))
 
         def refresh_lines():
             lines_tree.delete(*lines_tree.get_children())
@@ -325,16 +323,17 @@ class SalesMixin:
                 committed["done"] = True
                 raw = editor.get().strip()
                 try:
-                    if key == "quantity":
-                        value = int(raw)
-                        if value <= 0:
-                            raise ValueError
-                    else:
-                        value = float(raw)
-                        if value < 0:
-                            raise ValueError
+                    value = int(raw) if key == "quantity" else float(raw)
+                    if value < 0:
+                        raise ValueError
                 except ValueError:
                     editor.destroy()
+                    return
+                editor.destroy()
+                if key == "quantity" and value == 0:  # zero qty removes the line
+                    del lines[index]
+                    refresh_lines()
+                    self.mark_form_dirty()
                     return
                 ln = lines[index]
                 # Warn (but still allow) when selling more than we hold in stock.
@@ -347,14 +346,23 @@ class SalesMixin:
                             f"but {value} requested.",
                         )
                 ln[key] = value
-                editor.destroy()
                 refresh_lines()
+                self.mark_form_dirty()
 
             editor.bind("<Return>", commit)
             editor.bind("<FocusOut>", commit)
             editor.bind("<Escape>", lambda e: editor.destroy())
 
+        def delete_selected(event=None):
+            selection = lines_tree.selection()
+            if selection:
+                del lines[int(selection[0])]
+                refresh_lines()
+                self.mark_form_dirty()
+            return "break"
+
         lines_tree.bind("<Double-1>", edit_cell)
+        lines_tree.bind("<Delete>", delete_selected)
 
         def save():
             customer_id = customer_state["id"]
