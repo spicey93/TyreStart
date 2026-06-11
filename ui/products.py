@@ -2,10 +2,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import products as product_db
-import pricing as pricing_db
+from core import products as product_db
+from core import pricing as pricing_db
 
-from ui_common import AutocompleteCombobox, make_sortable
+from ui.common import AutocompleteCombobox, make_sortable
 
 
 class ProductsMixin:

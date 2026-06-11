@@ -3,12 +3,12 @@ import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import nominals
-import customers as customer_db
-import sales as sale_db
-import receipts as receipt_db
+from core import nominals
+from core import customers as customer_db
+from core import sales as sale_db
+from core import receipts as receipt_db
 
-from ui_common import make_sortable
+from ui.common import make_sortable
 
 
 class ReceiptsMixin:

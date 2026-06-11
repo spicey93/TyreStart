@@ -3,11 +3,11 @@ import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import suppliers as db
-import purchases as purchase_db
-import money
+from core import suppliers as db
+from core import purchases as purchase_db
+from core import money
 
-from ui_common import AutocompleteCombobox, make_sortable
+from ui.common import AutocompleteCombobox, make_sortable
 
 
 class PurchasesMixin:

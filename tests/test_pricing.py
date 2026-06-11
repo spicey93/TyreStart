@@ -1,7 +1,7 @@
 """Tests for the pricing-rule logic (the path that computes retail prices)."""
 import unittest
 
-import pricing
+from core import pricing
 from tests.support import DatabaseTestCase
 
 

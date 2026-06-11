@@ -6,7 +6,7 @@ central app.db alongside the other entities.
 
 import sqlite3
 
-from database import get_connection
+from core.database import get_connection
 
 
 class DuplicateCodeError(Exception):

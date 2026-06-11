@@ -12,7 +12,7 @@ promoted (Quote → Order → Invoice) it keeps the numbers it earned at each st
 
 import datetime
 
-from database import get_connection
+from core.database import get_connection
 
 STATUSES = ("Quote", "Order", "Invoice")
 DEFAULT_VAT_RATE = 20.0

@@ -11,7 +11,7 @@ import csv
 import datetime
 import re
 
-from database import get_connection
+from core.database import get_connection
 
 # Maps a source CSV column index -> the database column it populates.
 # The CSV's first column (a constant "N") and its empty trailing column are

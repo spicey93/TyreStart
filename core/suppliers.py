@@ -6,7 +6,7 @@ database (database.py), so suppliers are stored in app.db alongside products.
 
 import sqlite3
 
-from database import get_connection
+from core.database import get_connection
 
 
 class DuplicateNameError(Exception):

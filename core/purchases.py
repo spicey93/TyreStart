@@ -7,7 +7,7 @@ Stored in the central app.db alongside the other entities.
 
 import datetime
 
-from database import get_connection
+from core.database import get_connection
 
 STATUSES = ("Order", "Invoice")
 

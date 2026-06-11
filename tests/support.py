@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import database
+from core import database
 
 
 class DatabaseTestCase(unittest.TestCase):

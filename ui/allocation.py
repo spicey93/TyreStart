@@ -2,10 +2,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import products as product_db
-import money
+from core import products as product_db
+from core import money
 
-from ui_common import AutocompleteCombobox, make_sortable, VAT_RATE_OPTIONS
+from ui.common import AutocompleteCombobox, make_sortable, VAT_RATE_OPTIONS
 
 
 class AllocationMixin:

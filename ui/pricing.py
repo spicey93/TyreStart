@@ -2,9 +2,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import pricing as pricing_db
+from core import pricing as pricing_db
 
-from ui_common import make_sortable
+from ui.common import make_sortable
 
 
 class PricingMixin:

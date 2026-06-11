@@ -18,7 +18,7 @@ rule with the most conditions set. Ties are broken by the earliest-created rule.
 
 import math
 
-from database import get_connection
+from core.database import get_connection
 
 # Percentage uplift can be interpreted as a markup on cost or a target margin.
 PERCENT_TYPES = ("markup", "margin")
@@ -137,7 +137,7 @@ def price_from_rules(cost, pricing_key="", product_group="", rules=None):
 def price_for_product(product_id, rules=None):
     """Compute the retail price for a product from its average cost and its
     pricing key / product group, or None if no rule matches."""
-    import products as product_db
+    from core import products as product_db
 
     product = product_db.get_product(product_id)
     if product is None:

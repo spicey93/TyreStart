@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 
 # The one database file the whole app stores everything on.
-DB_PATH = Path(__file__).with_name("app.db")
+DB_PATH = Path(__file__).resolve().parent.parent / "app.db"
 
 
 def get_connection():
@@ -24,16 +24,16 @@ def init_db():
     """Create every table in the central database. Safe to call on each startup."""
     # Imported here (not at module top) to avoid an import cycle, since the
     # entity modules import get_connection from this module.
-    import suppliers
-    import products
-    import nominals
-    import purchases
-    import payments
-    import services
-    import customers
-    import sales
-    import receipts
-    import pricing
+    from core import suppliers
+    from core import products
+    from core import nominals
+    from core import purchases
+    from core import payments
+    from core import services
+    from core import customers
+    from core import sales
+    from core import receipts
+    from core import pricing
 
     suppliers.create_table()
     products.create_table()

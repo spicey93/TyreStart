@@ -2,10 +2,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import customers as customer_db
-import receipts as receipt_db
+from core import customers as customer_db
+from core import receipts as receipt_db
 
-from ui_common import make_sortable
+from ui.common import make_sortable
 
 
 class CustomersMixin:

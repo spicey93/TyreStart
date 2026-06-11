@@ -6,7 +6,7 @@ email and phone. Stored in the central app.db.
 
 import sqlite3
 
-from database import get_connection
+from core.database import get_connection
 
 
 class DuplicateNameError(Exception):

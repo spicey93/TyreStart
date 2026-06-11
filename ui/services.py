@@ -2,9 +2,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import services as service_db
+from core import services as service_db
 
-from ui_common import make_sortable
+from ui.common import make_sortable
 
 
 class ServicesMixin:

@@ -4,7 +4,7 @@ A small chart of accounts used when recording payments (the account the money
 is withdrawn from, e.g. "2004 - Bank Account"). Stored in the central app.db.
 """
 
-from database import get_connection
+from core.database import get_connection
 
 # Seeded on first run if the table is empty. (code, name)
 DEFAULT_ACCOUNTS = [

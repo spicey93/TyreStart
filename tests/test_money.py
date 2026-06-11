@@ -1,7 +1,7 @@
 """Unit tests for the pure money calculations (no DB / UI needed)."""
 import unittest
 
-import money
+from core import money
 
 
 class LineAmountsTests(unittest.TestCase):

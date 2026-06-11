@@ -7,7 +7,7 @@ supplier's invoices (payment.amount = sum of its allocations). Stored in app.db.
 
 import datetime
 
-from database import get_connection
+from core.database import get_connection
 
 METHODS = ("Cash", "Card", "BACS")
 

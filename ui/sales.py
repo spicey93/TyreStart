@@ -3,15 +3,15 @@ import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import database
-import products as product_db
-import services as service_db
-import customers as customer_db
-import sales as sale_db
-import pricing as pricing_db
-import money
+from core import database
+from core import products as product_db
+from core import services as service_db
+from core import customers as customer_db
+from core import sales as sale_db
+from core import pricing as pricing_db
+from core import money
 
-from ui_common import make_sortable, VAT_RATE_OPTIONS
+from ui.common import make_sortable, VAT_RATE_OPTIONS
 
 
 class SalesMixin:

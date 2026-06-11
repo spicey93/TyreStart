@@ -7,18 +7,18 @@ form-shortcut infrastructure.
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import database
+from core import database
 
-from ui_suppliers import SuppliersMixin
-from ui_products import ProductsMixin
-from ui_pricing import PricingMixin
-from ui_purchases import PurchasesMixin
-from ui_allocation import AllocationMixin
-from ui_payments import PaymentsMixin
-from ui_services import ServicesMixin
-from ui_customers import CustomersMixin
-from ui_sales import SalesMixin
-from ui_receipts import ReceiptsMixin
+from ui.suppliers import SuppliersMixin
+from ui.products import ProductsMixin
+from ui.pricing import PricingMixin
+from ui.purchases import PurchasesMixin
+from ui.allocation import AllocationMixin
+from ui.payments import PaymentsMixin
+from ui.services import ServicesMixin
+from ui.customers import CustomersMixin
+from ui.sales import SalesMixin
+from ui.receipts import ReceiptsMixin
 
 
 class App(

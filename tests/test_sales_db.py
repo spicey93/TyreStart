@@ -1,7 +1,7 @@
 """Tests for sale numbering and totals (run against a throwaway database)."""
-import customers
-import sales as sale_db
-import money
+from core import customers
+from core import sales as sale_db
+from core import money
 from tests.support import DatabaseTestCase
 
 
