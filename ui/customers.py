@@ -1,6 +1,7 @@
-"""Customer screens (mixin for App)."""
+﻿"""Customer screens (mixin for App)."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import customers as customer_db
 from core import receipts as receipt_db
@@ -16,7 +17,7 @@ class CustomersMixin:
 
         header = ttk.Frame(self.container)
         header.pack(fill="x", pady=(0, 10))
-        ttk.Label(header, text="Customers", font=("Segoe UI", 20, "bold")).pack(side="left")
+        ttk.Label(header, text="Customers", font=("Consolas", 20, "bold")).pack(side="left")
 
         bar = ttk.Frame(self.container)
         bar.pack(fill="x", pady=(0, 10))
@@ -104,7 +105,7 @@ class CustomersMixin:
         ttk.Label(
             self.container,
             text="Double-click or Enter to edit · Delete key to remove the selected customer.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(4, 0))
 
         refresh()
@@ -117,7 +118,7 @@ class CustomersMixin:
         ttk.Label(
             self.container,
             text="Edit Customer" if editing else "New Customer",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
         notebook = ttk.Notebook(self.container)
@@ -153,7 +154,7 @@ class CustomersMixin:
             ttk.Label(
                 details,
                 text=f"Balance owed by customer: {balance:,.2f}",
-                font=("Segoe UI", 12, "bold"),
+                font=("Consolas", 12, "bold"),
             ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(14, 0))
 
             # --- Receipts & Sales tabs (read-only; existing customer only) ---

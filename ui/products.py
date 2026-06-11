@@ -1,6 +1,7 @@
-"""Product screens (mixin for App)."""
+﻿"""Product screens (mixin for App)."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import products as product_db
 from core import pricing as pricing_db
@@ -22,7 +23,7 @@ class ProductsMixin:
         ttk.Label(
             header,
             text="Products",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(side="left")
 
         brands = product_db.get_brands()
@@ -203,7 +204,7 @@ class ProductsMixin:
         ttk.Label(
             self.container,
             text=product["description"] or "Product",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
         detail = ttk.Frame(self.container)
@@ -243,7 +244,7 @@ class ProductsMixin:
                 value = f"{price:,.2f}" if price is not None else "— (no matching rule)"
             else:
                 value = str(product[key] or "—")
-            ttk.Label(detail, text=label + ":", font=("Segoe UI", 9, "bold")).grid(
+            ttk.Label(detail, text=label + ":", font=("Consolas", 9, "bold")).grid(
                 row=row, column=0, sticky="w", padx=(0, 12), pady=2
             )
             ttk.Label(detail, text=value).grid(row=row, column=1, sticky="w", pady=2)
@@ -257,7 +258,7 @@ class ProductsMixin:
         self.current_view = "product_form"
         self._clear_container()
         ttk.Label(
-            self.container, text="New Product", font=("Segoe UI", 20, "bold")
+            self.container, text="New Product", font=("Consolas", 20, "bold")
         ).pack(anchor="w", pady=(0, 15))
 
         form = ttk.LabelFrame(self.container, text="Product Details", padding=12)
@@ -289,7 +290,7 @@ class ProductsMixin:
             self.container,
             text="Stock Code is generated automatically from the size, brand and "
             "manufacturer code. Pricing Key and Product Group are used by pricing rules.",
-            foreground="gray",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(10, 0))
 
         def save():

@@ -1,16 +1,23 @@
-"""Main application window: composes the per-entity screen mixins.
+﻿"""Main application window: composes the per-entity screen mixins.
 
 Each screen group lives in its own ui_*.py module as a mixin; this module
 wires them onto one App window alongside the shared navigation, menu, and
 form-shortcut infrastructure.
 """
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import database
 
+from ui import theme
 from ui.common import make_sortable
 from ui.suppliers import SuppliersMixin
+
+
+class SearchEntry(ttk.Entry):
+    """A plain Entry that marks itself as the search box of a `_searchable_table`,
+    so tab-focus logic can prefer it over the results table."""
 from ui.products import ProductsMixin
 from ui.pricing import PricingMixin
 from ui.purchases import PurchasesMixin
@@ -31,6 +38,15 @@ class App(
         super().__init__()
         self.title("Stock System")
         self.geometry("1000x550")
+        # Open windowed; F11 toggles full screen, Ctrl+Q quits the app.
+        self.bind_all("<F11>", lambda e: self.attributes(
+            "-fullscreen", not self.attributes("-fullscreen")))
+        self.bind_all("<Control-q>", lambda e: self._quit())
+        # The window-manager close box (when not full screen) confirms too.
+        self.protocol("WM_DELETE_WINDOW", self._quit)
+
+        # Retro high-contrast theme — palette and ttk styles live in ui/theme.py.
+        theme.apply(self)
 
         # Ensure all tables (suppliers, products) exist before any view reads them.
         database.init_db()
@@ -60,39 +76,62 @@ class App(
 
         self.show_home()
 
-    # Section key -> (menubar x-offset, [(item label, command), ...]).
+    # Section key -> [(item label, command), ...]. The dropdown aligns itself
+    # under the matching menubar button, so no per-section x-offset is needed.
     def _sections(self):
         return {
-            "suppliers": (60, [("All Suppliers", self.show_all_suppliers),
-                               ("New Supplier", self.show_create_supplier),
-                               ("New Payment", self.show_new_payment)]),
-            "products": (150, [("All Products", self.show_products),
-                               ("New Product", self.show_product_form),
-                               ("Pricing Rules", self.show_pricing_rules)]),
-            "purchases": (245, [("All Purchases", self.show_purchases),
-                                ("New Purchase", self.show_purchase_form)]),
-            "services": (340, [("All Services", self.show_services),
-                               ("New Service", self.show_service_form)]),
-            "customers": (425, [("All Customers", self.show_customers),
-                                ("New Customer", self.show_customer_form),
-                                ("New Receipt", self.show_new_receipt)]),
-            "sales": (520, [("All Sales", self.show_sales),
-                            ("New Sale", self.show_sale_form)]),
+            "suppliers": [("All Suppliers", self.show_all_suppliers),
+                          ("New Supplier", self.show_create_supplier),
+                          ("New Payment", self.show_new_payment)],
+            "products": [("All Products", self.show_products),
+                         ("New Product", self.show_product_form),
+                         ("Pricing Rules", self.show_pricing_rules)],
+            "purchases": [("All Purchases", self.show_purchases),
+                          ("New Purchase", self.show_purchase_form)],
+            "services": [("All Services", self.show_services),
+                         ("New Service", self.show_service_form)],
+            "customers": [("All Customers", self.show_customers),
+                          ("New Customer", self.show_customer_form),
+                          ("New Receipt", self.show_new_receipt)],
+            "sales": [("All Sales", self.show_sales),
+                      ("New Sale", self.show_sale_form)],
         }
 
     def _build_menu(self):
-        menubar = tk.Menu(self)
-        menubar.add_command(label="Home [F1]", command=lambda: self._go(self.show_home))
-        # Each section is a single command that opens our own keyboard-driven
-        # dropdown (not a native cascade), so F-keys can switch between open menus.
+        """Build a custom in-window menu bar that follows the theme.
+
+        We don't use a native `tk.Menu` menubar: on Windows it's drawn by the OS
+        and ignores our colors. Instead the bar is a themed `tk.Frame` of clickable
+        labels packed at the top of the window — fully styleable and already the
+        anchor our section dropdowns place themselves under.
+        """
+        menubar = tk.Frame(self, background=theme.BG_RAISED)
+        menubar.pack(side="top", fill="x")
+        self._menubar = menubar
+        self._section_buttons = {}
+
+        def add_item(text, command, key=None):
+            item = tk.Label(menubar, text=text, font=(theme.FONT_FAMILY, 11, "bold"),
+                            background=theme.BG_RAISED, foreground=theme.FG,
+                            padx=12, pady=4, cursor="hand2")
+            item.pack(side="left")
+            # Hover highlight in amber, matching menus elsewhere in the theme.
+            item.bind("<Enter>", lambda e: item.config(background=theme.ACCENT,
+                                                        foreground=theme.ACCENT_TEXT))
+            item.bind("<Leave>", lambda e: item.config(background=theme.BG_RAISED,
+                                                       foreground=theme.FG))
+            item.bind("<Button-1>", lambda e: command())
+            if key is not None:
+                self._section_buttons[key] = item
+
+        add_item("Home [F1]", lambda: self._go(self.show_home))
         labels = {
             "suppliers": "Suppliers [F2]", "products": "Products [F3]",
             "purchases": "Purchases [F4]", "services": "Services [F5]",
             "customers": "Customers [F6]", "sales": "Sales [F7]",
         }
         for key, label in labels.items():
-            menubar.add_command(label=label, command=lambda k=key: self._open_section(k))
-        self.config(menu=menubar)
+            add_item(label, lambda k=key: self._open_section(k), key=key)
 
     def _open_section(self, key):
         """Open (or switch to) a section's dropdown as an in-window overlay.
@@ -102,15 +141,17 @@ class App(
         pressing another F-key while it's open switches straight to that section
         with no Escape needed.
         """
-        x_offset, items = self._sections()[key]
+        items = self._sections()[key]
         self._section_commands = [command for _, command in items]
 
         frame = getattr(self, "_section_popup", None)
         if frame is None or not frame.winfo_exists():
-            frame = tk.Frame(self, background="#999999")  # 1px border around the list
+            frame = tk.Frame(self, background=theme.BORDER)  # bright retro border
             listbox = tk.Listbox(
                 frame, activestyle="none", exportselection=False, relief="flat",
-                highlightthickness=0, font=("Segoe UI", 10), bd=0,
+                highlightthickness=0, font=(theme.FONT_FAMILY, 11), bd=0,
+                background=theme.FIELD_BG, foreground=theme.FG,
+                selectbackground=theme.SELECT_BG, selectforeground=theme.SELECT_FG,
             )
             listbox.pack(padx=1, pady=1)
             listbox.bind("<Return>", self._section_choose)
@@ -134,7 +175,9 @@ class App(
         listbox.activate(0)
 
         self._section_opening = True
-        frame.place(x=x_offset, y=0)  # just under the (native) menubar
+        # Align the dropdown under its menubar button, just below the bar.
+        button = self._section_buttons[key]
+        frame.place(x=button.winfo_x(), y=self._menubar.winfo_height())
         frame.lift()
         listbox.focus_set()
         # Clear the "opening" guard after transient focus events settle, so a real
@@ -190,6 +233,11 @@ class App(
         if answer is False:      # No -> leave without saving
             return True
         return bool(save())      # Yes -> leave only if the save succeeds
+
+    def _quit(self):
+        """Confirm before closing the application."""
+        if messagebox.askyesno("Quit", "Are you sure you want to close the program?"):
+            self.destroy()
 
     def _go(self, target):
         """Navigate by calling `target` (a no-arg callable), first offering to
@@ -255,12 +303,17 @@ class App(
         )
 
     def _focus_tab(self, notebook):
-        """Focus the first item of the notebook's current tab: a table's first row
-        if it has one, else the first entry/combobox, else the first button."""
+        """Focus the first item of the notebook's current tab: a search box if the
+        tab has one, else a table's first row, else the first entry/button."""
         selected = notebook.select()
         if not selected:
             return
         frame = notebook.nametowidget(selected)
+        # A searchable tab (list-style) starts in its search box.
+        search_box = self._first_descendant(frame, (SearchEntry,))
+        if search_box is not None:
+            search_box.focus_set()
+            return
         tree = self._first_descendant(frame, (ttk.Treeview,))
         if tree is not None:
             tree.focus_set()
@@ -278,7 +331,8 @@ class App(
     def _searchable_table(self, parent, columns, headings, rows, cells,
                           widths=None, right_cols=(), field_labels=None,
                           empty_text="No records.", iid=None,
-                          on_open=None, on_delete=None, height=8):
+                          on_open=None, on_delete=None, height=8,
+                          search_first=False):
         """Build a search/filter bar above a Treeview inside `parent`.
 
         - `rows`: source records; `cells(r)` returns {column_id: display string}.
@@ -286,6 +340,8 @@ class App(
           None column searches every column. Defaults to All + one per column.
         - `iid(r)`: the tree iid for a row (enables `on_open`/`on_delete`, which
           receive the selected int iid on double-click/Enter and Delete).
+        - `search_first`: start with an empty table (no rows listed until a search
+          term is entered).
         Returns the Treeview.
         """
         field_labels = field_labels or ([("All", None)]
@@ -298,7 +354,9 @@ class App(
         search_var = tk.StringVar()
         field_var = tk.StringVar(value=field_labels[0][0])
         ttk.Label(bar, text="Search:").grid(row=0, column=0, sticky="w")
-        entry = ttk.Entry(bar, textvariable=search_var)
+        # A search-first tab starts focused in its box (SearchEntry); the others
+        # keep highlighting the table's first row, so use a plain Entry there.
+        entry = (SearchEntry if search_first else ttk.Entry)(bar, textvariable=search_var)
         entry.grid(row=0, column=1, sticky="ew", padx=(8, 10))
         ttk.Label(bar, text="Filter:").grid(row=0, column=2, sticky="w")
         field_combo = ttk.Combobox(
@@ -336,6 +394,13 @@ class App(
             query = search_var.get().strip().lower()
             col = field_map[field_var.get()]
             tree.delete(*tree.get_children())
+            if not rows:
+                status.config(text=empty_text)
+                return
+            if search_first and not query:
+                # Wait for a search term before listing anything.
+                status.config(text=f"Type a search term to list {len(rows)} record(s).")
+                return
             shown = 0
             for row_iid, c in prepared:
                 hay = (" ".join(c[k] for k in columns) if col is None else c[col]).lower()
@@ -343,9 +408,7 @@ class App(
                     kwargs = {"iid": row_iid} if row_iid is not None else {}
                     tree.insert("", "end", values=tuple(c[k] for k in columns), **kwargs)
                     shown += 1
-            if not rows:
-                status.config(text=empty_text)
-            elif shown == 0:
+            if shown == 0:
                 status.config(text="No matches for the current search.")
             else:
                 status.config(text=f"Showing {shown} of {len(rows)}.")
@@ -417,7 +480,7 @@ class App(
         ttk.Label(
             self.container,
             text="Home",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w")
         ttk.Label(
             self.container,

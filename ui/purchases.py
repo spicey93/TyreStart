@@ -1,7 +1,8 @@
-"""Purchase screens (mixin for App)."""
+﻿"""Purchase screens (mixin for App)."""
 import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import suppliers as db
 from core import purchases as purchase_db
@@ -18,7 +19,7 @@ class PurchasesMixin:
         header = ttk.Frame(self.container)
         header.pack(fill="x", pady=(0, 10))
         ttk.Label(
-            header, text="Purchases", font=("Segoe UI", 20, "bold")
+            header, text="Purchases", font=("Consolas", 20, "bold")
         ).pack(side="left")
 
         bar = ttk.Frame(self.container)
@@ -126,7 +127,7 @@ class PurchasesMixin:
         ttk.Label(
             self.container,
             text="Double-click or Enter to edit · Delete key to remove the selected purchase.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(4, 0))
 
         refresh()
@@ -140,7 +141,7 @@ class PurchasesMixin:
         ttk.Label(
             self.container,
             text="Edit Purchase" if editing else "New Purchase",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
         # --- Header fields (bordered panel; mirrors the Sale form's layout) ---
@@ -177,7 +178,7 @@ class PurchasesMixin:
         prod_header = ttk.Frame(self.container)
         prod_header.pack(fill="x", pady=(15, 5))
         ttk.Label(
-            prod_header, text="Products", font=("Segoe UI", 12, "bold")
+            prod_header, text="Products", font=("Consolas", 12, "bold")
         ).pack(side="left")
         ttk.Button(
             prod_header, text="Add Product",
@@ -215,7 +216,7 @@ class PurchasesMixin:
         bottom.pack(fill="x", pady=(6, 0))
         ttk.Button(bottom, text="Remove line", command=lambda: remove_line()).pack(side="left")
         total_label = ttk.Label(
-            bottom, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
+            bottom, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Consolas", 10, "bold")
         )
         total_label.pack(side="right")
 

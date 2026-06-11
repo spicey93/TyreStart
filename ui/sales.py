@@ -1,7 +1,8 @@
-"""Sale screens and dialogs (mixin for App)."""
+﻿"""Sale screens and dialogs (mixin for App)."""
 import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from ui import dialogs as messagebox
 
 from core import database
 from core import products as product_db
@@ -21,7 +22,7 @@ class SalesMixin:
 
         header = ttk.Frame(self.container)
         header.pack(fill="x", pady=(0, 10))
-        ttk.Label(header, text="Sales", font=("Segoe UI", 20, "bold")).pack(side="left")
+        ttk.Label(header, text="Sales", font=("Consolas", 20, "bold")).pack(side="left")
 
         bar = ttk.Frame(self.container)
         bar.pack(fill="x", pady=(0, 10))
@@ -120,7 +121,7 @@ class SalesMixin:
         ttk.Label(
             self.container,
             text="Double-click or Enter to edit · Delete key to remove the selected sale.",
-            foreground="#666666",
+            foreground="#C9A227",
         ).pack(anchor="w", pady=(4, 0))
 
         refresh()
@@ -137,7 +138,7 @@ class SalesMixin:
         ttk.Label(
             self.container,
             text="Edit Sale" if editing else "New Sale",
-            font=("Segoe UI", 20, "bold"),
+            font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
         status_var = tk.StringVar(value="Quote")
@@ -168,13 +169,13 @@ class SalesMixin:
                 child.destroy()
             if customer_state["id"] is not None:
                 ttk.Label(
-                    cust_frame, text=customer_state["name"], font=("Segoe UI", 10, "bold")
+                    cust_frame, text=customer_state["name"], font=("Consolas", 10, "bold")
                 ).pack(side="left")
                 ttk.Button(cust_frame, text="✕", width=3, command=clear_customer).pack(
                     side="left", padx=(8, 0)
                 )
             else:
-                ttk.Label(cust_frame, text="No customer selected", foreground="gray").pack(
+                ttk.Label(cust_frame, text="No customer selected", foreground="#C9A227").pack(
                     side="left"
                 )
                 ttk.Button(
@@ -207,7 +208,7 @@ class SalesMixin:
         # --- Line items (products + services) ---
         items_header = ttk.Frame(self.container)
         items_header.pack(fill="x", pady=(15, 5))
-        ttk.Label(items_header, text="Items", font=("Segoe UI", 12, "bold")).pack(side="left")
+        ttk.Label(items_header, text="Items", font=("Consolas", 12, "bold")).pack(side="left")
         ttk.Button(
             items_header, text="Add Product",
             command=lambda: self.open_product_allocation(
@@ -263,7 +264,7 @@ class SalesMixin:
         bottom.pack(fill="x", pady=(6, 0))
         ttk.Button(bottom, text="Remove line", command=lambda: remove_line()).pack(side="left")
         total_label = ttk.Label(
-            bottom, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Segoe UI", 10, "bold")
+            bottom, text="Net 0.00   VAT 0.00   Gross 0.00", font=("Consolas", 10, "bold")
         )
         total_label.pack(side="right")
 
@@ -424,7 +425,7 @@ class SalesMixin:
             entry.grid(row=row, column=1, pady=4)
             entries[key] = entry
         ttk.Label(
-            frame, text="Account # is generated automatically.", foreground="gray"
+            frame, text="Account # is generated automatically.", foreground="#C9A227"
         ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         def save():
