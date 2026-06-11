@@ -153,6 +153,7 @@ class PurchasesMixin:
         status_var = tk.StringVar(value="Order")
         reference_var = tk.StringVar()
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
+        reconciled_var = tk.BooleanVar(value=bool(editing and purchase["reconciled"]))
 
         # Left column: Supplier / Status.
         ttk.Label(head, text="Supplier:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
@@ -173,6 +174,11 @@ class PurchasesMixin:
 
         ttk.Label(head, text="Date:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
         ttk.Entry(head, textvariable=date_var, width=24).grid(row=1, column=3, sticky="w", pady=6)
+
+        ttk.Checkbutton(
+            head, text="Reconciled", variable=reconciled_var,
+            command=self.mark_form_dirty,
+        ).grid(row=2, column=2, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- Line items: added via the Product Allocation window ---
         prod_header = ttk.Frame(self.container)
@@ -311,7 +317,7 @@ class PurchasesMixin:
                 for ln in lines
             ]
             args = (supplier_id, status_var.get(), reference_var.get().strip(),
-                    date_var.get().strip(), items)
+                    date_var.get().strip(), items, int(reconciled_var.get()))
             if editing:
                 purchase_db.update_purchase(purchase["id"], *args)
                 return purchase["id"]

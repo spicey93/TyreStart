@@ -24,7 +24,9 @@ ACCENT = "#FFD500"      # bright yellow — buttons and selection (inverted)
 ACCENT_TEXT = "#000000" # black text drawn on yellow
 SELECT_BG = "#FFD500"   # selected row / active item: yellow bar
 SELECT_FG = "#000000"
+SELECT_DIM = "#6E5E00"  # selected row when its table is NOT focused (dim amber)
 FOCUS = "#FFFFFF"        # crisp white — outlines whatever widget has focus
+ROW_HOVER = "#3A3A00"   # row the mouse is over: faint amber wash
 
 # --- Fonts -------------------------------------------------------------------
 # "Consolas" ships on Windows; the family falls back gracefully elsewhere.
@@ -126,8 +128,12 @@ def apply(root):
     style.map("Treeview",
               bordercolor=[("focus", FOCUS)],
               lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)],
-              background=[("selected", SELECT_BG)],
-              foreground=[("selected", SELECT_FG)])
+              # Bright yellow selection when the table has focus; dim amber when it
+              # doesn't, so you can always see where you are but which table is live.
+              background=[("selected", "focus", SELECT_BG),
+                          ("selected", SELECT_DIM)],
+              foreground=[("selected", "focus", SELECT_FG),
+                          ("selected", FG)])
     style.configure("Treeview.Heading",
                     background=BG_RAISED, foreground=FG_BRIGHT,
                     bordercolor=BORDER, relief="raised",

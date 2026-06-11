@@ -9,6 +9,7 @@ from tkinter import ttk
 from ui import dialogs as messagebox
 
 from core import database
+from core import daterange
 
 from ui import theme
 from ui.common import make_sortable
@@ -62,7 +63,6 @@ class App(
         # is open switches straight to it (no Escape needed).
         self.current_view = None
         self._section_popup = None
-        self.bind_all("<F1>", lambda e: self._go(self.show_home))
         self.bind_all("<F2>", lambda e: self._open_section("suppliers"))
         self.bind_all("<F3>", lambda e: self._open_section("products"))
         self.bind_all("<F4>", lambda e: self._open_section("purchases"))
@@ -74,7 +74,9 @@ class App(
         self.container = ttk.Frame(self, padding=20)
         self.container.pack(fill="both", expand=True)
 
-        self.show_home()
+        # The Home page is retired for now (a dashboard will return here later);
+        # the app opens on the product catalogue.
+        self.show_products()
 
     # Section key -> [(item label, command), ...]. The dropdown aligns itself
     # under the matching menubar button, so no per-section x-offset is needed.
@@ -124,7 +126,6 @@ class App(
             if key is not None:
                 self._section_buttons[key] = item
 
-        add_item("Home [F1]", lambda: self._go(self.show_home))
         labels = {
             "suppliers": "Suppliers [F2]", "products": "Products [F3]",
             "purchases": "Purchases [F4]", "services": "Services [F5]",
@@ -328,6 +329,61 @@ class App(
         if target is not None:
             target.focus_set()
 
+    def _make_date_filter(self, parent, on_change):
+        """Build a Period + Start + End date-filter group inside `parent`.
+
+        Choosing a period (Today, This week, …) fills the Start/End boxes; editing
+        either box switches the period to 'Custom'. Returns `(frame, get_range)`
+        where `get_range()` -> `(start_date|None, end_date|None)` parsed from the
+        boxes (an open bound means no limit on that side).
+        """
+        frame = ttk.Frame(parent)
+        period_var = tk.StringVar(value="All")
+        start_var = tk.StringVar()
+        end_var = tk.StringVar()
+        guard = {"syncing": False}
+
+        ttk.Label(frame, text="Period:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        period = ttk.Combobox(frame, state="readonly", width=12,
+                              textvariable=period_var, values=list(daterange.PERIODS))
+        period.grid(row=0, column=1, padx=(0, 10))
+        period.current(0)
+        ttk.Label(frame, text="Start:").grid(row=0, column=2, sticky="w", padx=(0, 6))
+        start = ttk.Entry(frame, width=10, textvariable=start_var)
+        start.grid(row=0, column=3, padx=(0, 10))
+        ttk.Label(frame, text="End:").grid(row=0, column=4, sticky="w", padx=(0, 6))
+        end = ttk.Entry(frame, width=10, textvariable=end_var)
+        end.grid(row=0, column=5, padx=(0, 10))
+        # Filter controls, not record fields — never dirty an edit form.
+        for w in (period, start, end):
+            w._ignore_dirty = True
+
+        def on_period(_event=None):
+            guard["syncing"] = True
+            if period_var.get() in ("All", "Custom"):
+                if period_var.get() == "All":
+                    start_var.set("")
+                    end_var.set("")
+            else:
+                s, e = daterange.period_range(period_var.get())
+                start_var.set(daterange.format(s))
+                end_var.set(daterange.format(e))
+            guard["syncing"] = False
+            on_change()
+
+        def on_edit(*_):
+            if guard["syncing"]:
+                return
+            period_var.set("Custom")
+            on_change()
+
+        period.bind("<<ComboboxSelected>>", on_period)
+        start_var.trace_add("write", on_edit)
+        end_var.trace_add("write", on_edit)
+
+        return frame, (lambda: (daterange.parse(start_var.get()),
+                                daterange.parse(end_var.get())))
+
     def _searchable_table(self, parent, columns, headings, rows, cells,
                           widths=None, right_cols=(), field_labels=None,
                           empty_text="No records.", iid=None,
@@ -475,16 +531,14 @@ class App(
         return None
 
     def show_home(self):
+        """Reserved for a future dashboard view. Not wired into navigation yet —
+        the app currently opens on the product catalogue instead."""
         self.current_view = "home"
         self._clear_container()
+        ttk.Label(self.container, text="Home", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             self.container,
-            text="Home",
-            font=("Consolas", 20, "bold"),
-        ).pack(anchor="w")
-        ttk.Label(
-            self.container,
-            text="Welcome! Use the menu bar to manage suppliers and browse products.",
+            text="A dashboard will live here in the future.",
         ).pack(anchor="w", pady=(10, 0))
 
 

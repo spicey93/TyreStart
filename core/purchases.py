@@ -38,10 +38,17 @@ def create_table():
                 status      TEXT NOT NULL,
                 reference   TEXT,
                 date        TEXT,
+                reconciled  INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT
             )
             """
         )
+        # Migrate databases created before the reconciled flag existed.
+        pcols = {row["name"] for row in conn.execute("PRAGMA table_info(purchases)")}
+        if "reconciled" not in pcols:
+            conn.execute(
+                "ALTER TABLE purchases ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS purchase_items (
@@ -82,26 +89,28 @@ def _insert_items(conn, purchase_id, items):
     )
 
 
-def create_purchase(supplier_id, status, reference, date, items):
+def create_purchase(supplier_id, status, reference, date, items, reconciled=0):
     """Insert a purchase with its line items. Returns the new purchase id."""
     with get_connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO purchases (supplier_id, status, reference, date, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (supplier_id, status, reference, date, _now()),
+            "INSERT INTO purchases "
+            "(supplier_id, status, reference, date, reconciled, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (supplier_id, status, reference, date, int(reconciled), _now()),
         )
         purchase_id = cursor.lastrowid
         _insert_items(conn, purchase_id, items)
         return purchase_id
 
 
-def update_purchase(purchase_id, supplier_id, status, reference, date, items):
+def update_purchase(purchase_id, supplier_id, status, reference, date, items,
+                    reconciled=0):
     """Update a purchase, replacing all of its line items."""
     with get_connection() as conn:
         conn.execute(
-            "UPDATE purchases SET supplier_id = ?, status = ?, reference = ?, date = ? "
-            "WHERE id = ?",
-            (supplier_id, status, reference, date, purchase_id),
+            "UPDATE purchases SET supplier_id = ?, status = ?, reference = ?, "
+            "date = ?, reconciled = ? WHERE id = ?",
+            (supplier_id, status, reference, date, int(reconciled), purchase_id),
         )
         conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
         _insert_items(conn, purchase_id, items)
@@ -118,7 +127,7 @@ def get_purchase(purchase_id):
     with get_connection() as conn:
         return conn.execute(
             "SELECT pu.id, pu.supplier_id, pu.status, pu.reference, pu.date, "
-            "s.name AS supplier_name "
+            "pu.reconciled, s.name AS supplier_name "
             "FROM purchases pu JOIN suppliers s ON s.id = pu.supplier_id "
             "WHERE pu.id = ?",
             (purchase_id,),
@@ -217,12 +226,24 @@ def supplier_invoices(supplier_id, outstanding_only=False):
 
 
 def supplier_purchases(supplier_id):
-    """All purchases for a supplier (any status), newest first, with gross total."""
+    """All purchases for a supplier (any status), newest first, with gross total,
+    amount allocated against it, and its reconciled flag (for list filters)."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT pu.id, pu.reference, pu.status, pu.date, "
+            "SELECT pu.id, pu.reference, pu.status, pu.date, pu.reconciled, "
             f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
-            "          WHERE pi.purchase_id = pu.id), 0) AS total "
+            "          WHERE pi.purchase_id = pu.id), 0) AS total, "
+            "COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa "
+            "          WHERE pa.purchase_id = pu.id), 0) AS allocated "
             "FROM purchases pu WHERE pu.supplier_id = ? ORDER BY pu.id DESC",
             (supplier_id,),
         ).fetchall()
+
+
+def set_reconciled(purchase_id, reconciled):
+    """Mark a purchase reconciled (or not)."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE purchases SET reconciled = ? WHERE id = ?",
+            (int(reconciled), purchase_id),
+        )

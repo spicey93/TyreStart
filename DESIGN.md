@@ -131,6 +131,22 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
   Pass `search_first=True` for a large/secondary list: the table loads empty and lists
   rows only once a term is entered, and the tab opens focused in the search box (instead
   of highlighting the first row).
+- **Date-filtered lists** use `self._make_date_filter(parent, on_change)` → `(frame,
+  get_range)`: a Period dropdown (presets in `core/daterange.PERIODS`) plus Start/End
+  boxes. Choosing a preset fills the boxes; editing a box switches to *Custom*.
+  `get_range()` returns parsed `(start, end)` dates; filter rows with
+  `daterange.in_range(row_date, start, end)`. Dates are `DD/MM/YY` text — parse via
+  `daterange.parse`. The supplier Payments/Purchases tabs pair this with extra
+  readonly filter combos (`_filter_combo`) for Method / Fully Allocated / Reconciled /
+  Paid.
+
+## Highlighting (focus & hover)
+- The focused widget always gets a **crisp white outline** (entries, combos, tables,
+  buttons — see `theme.FOCUS`). A table's selected row is **bright yellow when that
+  table has focus** and **dim amber when it doesn't** (`SELECT_BG` vs `SELECT_DIM`), so
+  it's clear both where you are and which table is live.
+- **Every table highlights the row under the mouse** with a faint amber wash
+  (`theme.ROW_HOVER`), wired centrally in `make_sortable` — no per-table code needed.
 
 ## Tables (lists)
 - `ttk.Treeview(show="headings")`. **Set each row's `iid` to the record's DB id** so

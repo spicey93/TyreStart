@@ -150,10 +150,23 @@ class PaymentsMixin:
         ttk.Label(head, text="Amount:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
         ttk.Entry(head, textvariable=amount_var, width=22).grid(row=1, column=3, sticky="w", pady=6)
 
+        def default_method_for(sid):
+            """Pre-select the supplier's preferred payment method, if it has one."""
+            supplier = next((s for s in suppliers if s["id"] == sid), None)
+            preferred = supplier["payment_method"] if supplier else ""
+            if preferred in payment_db.METHODS:
+                method_var.set(preferred)
+
+        supplier_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda e: default_method_for(supplier_by_label.get(supplier_var.get())),
+        )
+
         if supplier_id is not None:
             label = next((s["name"] for s in suppliers if s["id"] == supplier_id), None)
             if label is not None:
                 supplier_var.set(label)
+                default_method_for(supplier_id)
 
         ttk.Label(
             self.container,
