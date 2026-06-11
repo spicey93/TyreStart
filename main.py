@@ -45,7 +45,7 @@ class App(
         # is open switches straight to it (no Escape needed).
         self.current_view = None
         self._section_popup = None
-        self.bind_all("<F1>", lambda e: self.show_home())
+        self.bind_all("<F1>", lambda e: self._go(self.show_home))
         self.bind_all("<F2>", lambda e: self._open_section("suppliers"))
         self.bind_all("<F3>", lambda e: self._open_section("products"))
         self.bind_all("<F4>", lambda e: self._open_section("purchases"))
@@ -63,7 +63,8 @@ class App(
     def _sections(self):
         return {
             "suppliers": (60, [("All Suppliers", self.show_all_suppliers),
-                               ("New Supplier", self.show_create_supplier)]),
+                               ("New Supplier", self.show_create_supplier),
+                               ("New Payment", self.show_new_payment)]),
             "products": (150, [("All Products", self.show_products),
                                ("New Product", self.show_product_form),
                                ("Pricing Rules", self.show_pricing_rules)]),
@@ -79,7 +80,7 @@ class App(
 
     def _build_menu(self):
         menubar = tk.Menu(self)
-        menubar.add_command(label="Home [F1]", command=self.show_home)
+        menubar.add_command(label="Home [F1]", command=lambda: self._go(self.show_home))
         # Each section is a single command that opens our own keyboard-driven
         # dropdown (not a native cascade), so F-keys can switch between open menus.
         labels = {
@@ -144,7 +145,7 @@ class App(
         index = selection[0] if selection else listbox.index("active")
         self._close_section()
         if 0 <= index < len(self._section_commands):
-            self._section_commands[index]()
+            self._go(self._section_commands[index])
 
     def _on_section_focusout(self, event):
         if not getattr(self, "_section_opening", False):
@@ -207,6 +208,59 @@ class App(
             )
         return True
 
+    def _can_leave(self):
+        """True if it's OK to leave the current form. With unsaved edits, ask
+        whether to save first: Yes saves (and only leaves if the save succeeds),
+        No discards, Cancel stays. Forms opt in by registering a save via
+        _register_form; older forms (no registered save) fall back to a simple
+        discard-or-stay prompt."""
+        if not getattr(self, "_form_dirty", False):
+            return True
+        save = getattr(self, "_form_save", None)
+        if save is None:
+            return messagebox.askyesno(
+                "Unsaved changes", "You have unsaved changes. Discard them?"
+            )
+        answer = messagebox.askyesnocancel(
+            "Unsaved changes", "Save your changes before leaving?"
+        )
+        if answer is None:       # Cancel -> stay on the form
+            return False
+        if answer is False:      # No -> leave without saving
+            return True
+        return bool(save())      # Yes -> leave only if the save succeeds
+
+    def _go(self, target):
+        """Navigate by calling `target` (a no-arg callable), first offering to
+        save any unsaved edits on the current form."""
+        if self._can_leave():
+            target()
+
+    def _register_form(self, save, back):
+        """Mark the current view as an editable form. Tracks edits (so leaving
+        while dirty offers to save), remembers how to `save` (a callable that
+        persists and returns a truthy value on success / falsy on validation
+        failure), and binds Esc to leave back to `back`. Replaces the explicit
+        Save/Cancel buttons. Cleared on the next view switch."""
+        self._unbind_form_shortcuts()
+        self._form_shortcuts = []
+        self._form_dirty = False
+        self._form_save = save
+
+        def on_key(event):
+            if event.keysym not in self._NAV_KEYS and not event.keysym.startswith("F"):
+                self._form_dirty = True
+        self._form_shortcuts.append(("<Key>", self.bind("<Key>", on_key, add="+")))
+        self._form_shortcuts.append((
+            "<<ComboboxSelected>>",
+            self.bind("<<ComboboxSelected>>", lambda e: self.mark_form_dirty(), add="+"),
+        ))
+
+        def leave(_event):
+            self._go(back)
+            return "break"
+        self._form_shortcuts.append(("<Escape>", self.bind("<Escape>", leave)))
+
     def _discard_guard(self, navigate):
         """Wrap a navigation action so it first confirms discarding unsaved edits."""
         def go():
@@ -222,6 +276,10 @@ class App(
     def _clear_container(self):
         self._close_section()  # dismiss any open section dropdown on view switch
         self._unbind_form_shortcuts()  # drop the previous form's shortcuts
+        # A fresh view starts with no unsaved edits and no registered save, so
+        # navigating away from a plain list view never prompts.
+        self._form_dirty = False
+        self._form_save = None
         for widget in self.container.winfo_children():
             widget.destroy()
         # Once the new view has been built (next idle), focus its first interactive

@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 
 from core import suppliers as db
 from core import payments as payment_db
+from core import purchases as purchase_db
 
 from ui.common import make_sortable
 
@@ -126,9 +127,29 @@ class SuppliersMixin:
             if sid is not None:
                 self.show_supplier_form(db.get_supplier(sid))
 
-        # Double-clicking or pressing Enter on a row opens that supplier.
+        def delete_selected(event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            sid = int(selection[0])
+            supplier = db.get_supplier(sid)
+            if supplier and messagebox.askyesno(
+                "Delete supplier", f"Delete '{supplier['name']}'?"
+            ):
+                db.delete_supplier(sid)
+                refresh_tree()
+
+        # Double-clicking or pressing Enter on a row opens that supplier;
+        # Delete removes the selected one (deletion lives here, not on the form).
         tree.bind("<Double-1>", lambda e: edit_selected())
         tree.bind("<Return>", lambda e: edit_selected())
+        tree.bind("<Delete>", delete_selected)
+
+        ttk.Label(
+            self.container,
+            text="Double-click or Enter to edit · Delete key to remove the selected supplier.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(6, 0))
 
         refresh_tree()
 
@@ -136,7 +157,12 @@ class SuppliersMixin:
         self.show_supplier_form()
 
     def show_supplier_form(self, supplier=None):
-        """Form used for both creating (supplier=None) and editing a supplier."""
+        """Create (supplier=None) or edit a supplier.
+
+        Editing shows Details / Payments / Purchases tabs. There are no
+        Save/Cancel/Delete buttons: edits are saved when leaving the page (you're
+        asked first), Esc leaves back to the list, and deletion lives on the list.
+        """
         self.current_view = "form"
         self._clear_container()
         editing = supplier is not None
@@ -146,8 +172,12 @@ class SuppliersMixin:
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
-        form = ttk.Frame(self.container)
-        form.pack(anchor="w")
+        notebook = ttk.Notebook(self.container)
+        notebook.pack(fill="both", expand=True)
+
+        # --- Details tab (the editable fields) ---
+        details = ttk.Frame(notebook, padding=12)
+        notebook.add(details, text="Details")
 
         entries = {}
         fields = [
@@ -158,86 +188,100 @@ class SuppliersMixin:
             ("phone", "Phone"),
         ]
         for row, (key, label) in enumerate(fields):
-            ttk.Label(form, text=label + ":").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
-            entry = ttk.Entry(form, width=40)
+            ttk.Label(details, text=label + ":").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
+            entry = ttk.Entry(details, width=40)
             entry.grid(row=row, column=1, pady=5)
             if editing:
                 entry.insert(0, supplier[key] or "")
             entries[key] = entry
 
+        if editing:
+            balance = payment_db.supplier_balance(supplier["id"])
+            ttk.Label(
+                details,
+                text=f"Balance owed: {balance:,.2f}",
+                font=("Segoe UI", 12, "bold"),
+            ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(14, 0))
+
+            # --- Payments & Purchases tabs (read-only; existing supplier only) ---
+            self._build_supplier_payments_tab(notebook, supplier["id"])
+            self._build_supplier_purchases_tab(notebook, supplier["id"])
+
         def save():
+            """Persist the Details fields. Returns the supplier id on success, or
+            None if validation/uniqueness fails (so the caller can stay put)."""
             data = {key: entry.get().strip() for key, entry in entries.items()}
             if not data["name"]:
                 messagebox.showwarning("Missing name", "Please enter a supplier name.")
-                return
+                return None
             try:
                 if editing:
                     db.update_supplier(
                         supplier["id"], data["name"], data["account_number"],
                         data["contact"], data["email"], data["phone"],
                     )
-                    message = f"Supplier '{data['name']}' updated."
-                else:
-                    db.add_supplier(
-                        data["name"], data["account_number"],
-                        data["contact"], data["email"], data["phone"],
-                    )
-                    message = f"Supplier '{data['name']}' created."
+                    return supplier["id"]
+                return db.add_supplier(
+                    data["name"], data["account_number"],
+                    data["contact"], data["email"], data["phone"],
+                )
             except db.DuplicateNameError:
                 messagebox.showerror(
                     "Duplicate name",
                     f"A supplier named '{data['name']}' already exists.",
                 )
-                return
-            messagebox.showinfo("Saved", message)
-            self.show_all_suppliers()
+                return None
 
-        def delete_current():
-            if not editing:
-                return
-            if messagebox.askyesno("Delete supplier", f"Delete '{supplier['name']}'?"):
-                db.delete_supplier(supplier["id"])
-                self.show_all_suppliers()
+        self._register_form(save=save, back=self.show_all_suppliers)
 
-        cancel = self._discard_guard(self.show_all_suppliers)
-        button_frame = ttk.Frame(self.container)
-        button_frame.pack(anchor="w", pady=(20, 0))
-        ttk.Button(button_frame, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(
-            button_frame, text="Cancel (Esc)", command=cancel
-        ).pack(side="left", padx=(8, 0))
-        if editing:
-            ttk.Button(
-                button_frame,
-                text="Delete (Ctrl+D)",
-                command=delete_current,
-            ).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(
-            save=save, cancel=cancel,
-            delete=delete_current if editing else None,
-        )
+    def _build_supplier_payments_tab(self, notebook, supplier_id):
+        """Read-only list of the supplier's payments (new payments are made via
+        the Suppliers → New Payment menu)."""
+        tab = ttk.Frame(notebook, padding=12)
+        notebook.add(tab, text="Payments")
+        columns = ("date", "account", "method", "amount", "invoices")
+        headings = ("Date", "Account", "Method", "Amount", "Invoices")
+        widths = (90, 160, 70, 90, 200)
+        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        tree.column("amount", anchor="e")
+        make_sortable(tree)
+        tree.pack(fill="both", expand=True)
+        rows = payment_db.get_payments(supplier_id)
+        for r in rows:
+            tree.insert(
+                "", "end",
+                values=(
+                    r["date"] or "", f"{r['account_code']} - {r['account_name']}",
+                    r["method"] or "", f"{r['amount']:,.2f}", r["invoices"] or "",
+                ),
+            )
+        ttk.Label(
+            tab, text=(f"{len(rows)} payment(s)." if rows else "No payments yet."),
+        ).pack(anchor="w", pady=(8, 0))
 
-        # Account section: balance + payment actions (only for an existing supplier).
-        if editing:
-            account = ttk.LabelFrame(self.container, text="Account", padding=10)
-            account.pack(anchor="w", fill="x", pady=(20, 0))
-            balance = payment_db.supplier_balance(supplier["id"])
-            ttk.Label(
-                account,
-                text=f"Balance owed: {balance:,.2f}",
-                font=("Segoe UI", 12, "bold"),
-            ).pack(anchor="w")
-            acc_btns = ttk.Frame(account)
-            acc_btns.pack(anchor="w", pady=(8, 0))
-            ttk.Button(
-                acc_btns, text="Make Payment",
-                command=lambda: self.show_payment_form(supplier["id"]),
-            ).pack(side="left")
-            ttk.Button(
-                acc_btns, text="View Payments",
-                command=lambda: self.show_payments(supplier["id"]),
-            ).pack(side="left", padx=(8, 0))
-            ttk.Button(
-                acc_btns, text="View Purchases",
-                command=lambda: self.show_purchases(prefill=supplier["name"]),
-            ).pack(side="left", padx=(8, 0))
+    def _build_supplier_purchases_tab(self, notebook, supplier_id):
+        """Read-only list of the supplier's purchases (orders and invoices)."""
+        tab = ttk.Frame(notebook, padding=12)
+        notebook.add(tab, text="Purchases")
+        columns = ("reference", "status", "date", "total")
+        headings = ("Reference", "Status", "Date", "Total")
+        widths = (150, 90, 110, 110)
+        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        tree.column("total", anchor="e")
+        make_sortable(tree)
+        tree.pack(fill="both", expand=True)
+        rows = purchase_db.supplier_purchases(supplier_id)
+        for r in rows:
+            tree.insert(
+                "", "end",
+                values=(r["reference"] or "", r["status"], r["date"] or "", f"{r['total']:,.2f}"),
+            )
+        ttk.Label(
+            tab, text=(f"{len(rows)} purchase(s)." if rows else "No purchases yet."),
+        ).pack(anchor="w", pady=(8, 0))

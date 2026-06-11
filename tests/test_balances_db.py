@@ -98,3 +98,22 @@ class SupplierBalanceTests(DatabaseTestCase):
         payments.create_payment(self.supplier, self.nominal, "BACS", "2026-01-02",
                                 [{"purchase_id": self.purchase, "amount": 110.0}])  # fully paid
         self.assertEqual(purchases.supplier_invoices(self.supplier, outstanding_only=True), [])
+
+
+class SupplierPurchasesTests(DatabaseTestCase):
+    def test_returns_only_this_suppliers_purchases_any_status(self):
+        s1 = self.make_supplier("S1")
+        s2 = self.make_supplier("S2")
+        product = self.make_product()
+        purchases.create_purchase(s1, "Invoice", "INV1", "2026-01-01",
+                                  [cost_line(product, 2, 10.0, 20.0)])  # gross 24
+        purchases.create_purchase(s1, "Order", "ORD1", "2026-01-01",
+                                  [cost_line(product, 1, 5.0, 0.0)])    # gross 5
+        purchases.create_purchase(s2, "Invoice", "INV2", "2026-01-01",
+                                  [cost_line(product, 1, 100.0, 20.0)])
+        rows = purchases.supplier_purchases(s1)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["status"] for r in rows}, {"Invoice", "Order"})
+        totals = {r["reference"]: round(r["total"], 2) for r in rows}
+        self.assertEqual(totals, {"INV1": 24.0, "ORD1": 5.0})
+        self.assertEqual(len(purchases.supplier_purchases(s2)), 1)

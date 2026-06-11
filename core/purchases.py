@@ -214,3 +214,15 @@ def supplier_invoices(supplier_id, outstanding_only=False):
             }
         )
     return invoices
+
+
+def supplier_purchases(supplier_id):
+    """All purchases for a supplier (any status), newest first, with gross total."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT pu.id, pu.reference, pu.status, pu.date, "
+            f"COALESCE((SELECT SUM({_PI_GROSS}) FROM purchase_items pi "
+            "          WHERE pi.purchase_id = pu.id), 0) AS total "
+            "FROM purchases pu WHERE pu.supplier_id = ? ORDER BY pu.id DESC",
+            (supplier_id,),
+        ).fetchall()
