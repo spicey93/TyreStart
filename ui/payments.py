@@ -217,18 +217,11 @@ class PaymentsMixin:
             if account_id is None:
                 messagebox.showwarning("Account", "Choose an account to pay from.")
                 return
-            payment_db.create_payment(
+            return payment_db.create_payment(
                 state["supplier_id"], account_id, method_var.get(),
                 date_var.get().strip(), allocations,
             )
-            messagebox.showinfo("Saved", "Payment recorded.")
-            self.show_all_suppliers()
 
-        cancel = self._discard_guard(self.show_all_suppliers)
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save Payment (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(save=save, cancel=cancel)
+        self._register_form(save=save, back=self.show_all_suppliers)
 
     # ------------------------------------------------------------------- Services

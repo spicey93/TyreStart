@@ -101,8 +101,28 @@ class SalesMixin:
                 return
             self.show_sale_form(sale_db.get_sale(int(selection[0])))
 
+        def delete_selected(event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            if messagebox.askyesno("Delete sale", "Delete this sale?"):
+                try:
+                    sale_db.delete_sale(int(selection[0]))
+                except Exception as exc:  # e.g. a sale with receipts allocated
+                    messagebox.showerror("Cannot delete", str(exc))
+                    return
+                refresh()
+
         tree.bind("<Double-1>", lambda e: open_selected())
         tree.bind("<Return>", lambda e: open_selected())
+        tree.bind("<Delete>", delete_selected)
+
+        ttk.Label(
+            self.container,
+            text="Double-click or Enter to edit · Delete key to remove the selected sale.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(4, 0))
+
         refresh()
 
     def show_sale_form(self, sale=None, prefill_product=None):
@@ -338,40 +358,17 @@ class SalesMixin:
             customer_id = customer_state["id"]
             if customer_id is None:
                 messagebox.showwarning("Customer", "Please choose a customer.")
-                return
+                return None
             if not lines:
                 messagebox.showwarning("No items", "Add at least one product or service.")
-                return
+                return None
             args = (customer_id, status_var.get(), date_var.get().strip(), lines)
             if editing:
                 sale_db.update_sale(sale["id"], *args)
-            else:
-                sale_db.create_sale(*args)
-            messagebox.showinfo("Saved", "Sale saved.")
-            self.show_sales()
+                return sale["id"]
+            return sale_db.create_sale(*args)
 
-        def delete_current():
-            if not editing:
-                return
-            if messagebox.askyesno("Delete sale", "Delete this sale?"):
-                try:
-                    sale_db.delete_sale(sale["id"])
-                except Exception as exc:  # e.g. a sale with receipts allocated
-                    messagebox.showerror("Cannot delete", str(exc))
-                    return
-                self.show_sales()
-
-        cancel = self._discard_guard(self.show_sales)
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(12, 0))
-        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        if editing:
-            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(
-            save=save, cancel=cancel,
-            delete=delete_current if editing else None,
-        )
+        self._register_form(save=save, back=self.show_sales)
 
         if editing:
             set_customer(sale["customer_id"], sale["customer_name"])

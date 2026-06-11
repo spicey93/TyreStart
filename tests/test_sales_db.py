@@ -37,6 +37,22 @@ class SaleNumberingTests(DatabaseTestCase):
         self.assertEqual(row["status"], "Order")
 
 
+class ListForCustomerTests(DatabaseTestCase):
+    def setUp(self):
+        super().setUp()
+        self.customer = customers.add_customer("Test Customer")
+
+    def test_returns_only_this_customers_sales_any_status(self):
+        other = customers.add_customer("Other")
+        sale_db.create_sale(self.customer, "Quote", "2026-01-01", [product_line(2, 10.0, 20.0)])
+        sale_db.create_sale(self.customer, "Invoice", "2026-01-01", [product_line(1, 50.0, 0.0)])
+        sale_db.create_sale(other, "Order", "2026-01-01", [product_line(1, 100.0, 20.0)])
+        rows = sale_db.list_for_customer(self.customer)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["status"] for r in rows}, {"Quote", "Invoice"})
+        self.assertEqual(len(sale_db.list_for_customer(other)), 1)
+
+
 class SaleTotalsTests(DatabaseTestCase):
     def setUp(self):
         super().setUp()

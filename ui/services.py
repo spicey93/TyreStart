@@ -88,8 +88,27 @@ class ServicesMixin:
                 return
             self.show_service_form(service_db.get_service(int(selection[0])))
 
+        def delete_selected(event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            service = service_db.get_service(int(selection[0]))
+            if service and messagebox.askyesno(
+                "Delete service", f"Delete '{service['service_name']}'?"
+            ):
+                service_db.delete_service(service["id"])
+                refresh()
+
         tree.bind("<Double-1>", lambda e: open_selected())
         tree.bind("<Return>", lambda e: open_selected())
+        tree.bind("<Delete>", delete_selected)
+
+        ttk.Label(
+            self.container,
+            text="Double-click or Enter to edit · Delete key to remove the selected service.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(4, 0))
+
         refresh()
 
     def show_service_form(self, service=None):
@@ -128,48 +147,29 @@ class ServicesMixin:
             data = {key: entry.get().strip() for key, entry in entries.items()}
             if not data["service_name"]:
                 messagebox.showwarning("Missing name", "Please enter a service name.")
-                return
+                return None
             try:
                 cost = float(data["cost"]) if data["cost"] else 0.0
                 retail = float(data["retail_price"]) if data["retail_price"] else 0.0
             except ValueError:
                 messagebox.showwarning("Invalid", "Cost and Retail Price must be numbers.")
-                return
+                return None
             try:
                 if editing:
                     service_db.update_service(
                         service["id"], data["service_code"], data["service_name"], cost, retail
                     )
-                else:
-                    service_db.create_service(
-                        data["service_code"], data["service_name"], cost, retail
-                    )
+                    return service["id"]
+                return service_db.create_service(
+                    data["service_code"], data["service_name"], cost, retail
+                )
             except service_db.DuplicateCodeError:
                 messagebox.showerror(
                     "Duplicate code",
                     f"A service with code '{data['service_code']}' already exists.",
                 )
-                return
-            messagebox.showinfo("Saved", f"Service '{data['service_name']}' saved.")
-            self.show_services()
+                return None
 
-        def delete_current():
-            if not editing:
-                return
-            if messagebox.askyesno("Delete service", f"Delete '{service['service_name']}'?"):
-                service_db.delete_service(service["id"])
-                self.show_services()
-
-        cancel = self._discard_guard(self.show_services)
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(20, 0))
-        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        if editing:
-            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(
-            save=save, cancel=cancel,
-            delete=delete_current if editing else None,
-        )
+        self._register_form(save=save, back=self.show_services)
 
     # ------------------------------------------------------------------ Customers

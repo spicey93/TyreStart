@@ -296,14 +296,7 @@ class ProductsMixin:
             data = {key: entry.get().strip() for key, entry in entries.items()}
             if not data["description"]:
                 messagebox.showwarning("Missing description", "Please enter a description.")
-                return
-            product_db.create_product(**data)
-            messagebox.showinfo("Saved", "Product created.")
-            self.show_products()
+                return None
+            return product_db.create_product(**data)
 
-        cancel = self._discard_guard(self.show_products)
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(save=save, cancel=cancel)
+        self._register_form(save=save, back=self.show_products)

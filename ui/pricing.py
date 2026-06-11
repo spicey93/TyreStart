@@ -91,10 +91,12 @@ class PricingMixin:
                 pricing_db.delete_rule(int(selection[0]))
                 refresh()
 
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(10, 0))
-        ttk.Button(btns, text="Delete", command=delete_selected).pack(side="left")
         tree.bind("<Delete>", lambda e: delete_selected())
+        ttk.Label(
+            self.container,
+            text="Select a rule and press Delete to remove it.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(10, 0))
         refresh()
 
     def show_pricing_rule_form(self):
@@ -168,19 +170,12 @@ class PricingMixin:
                     "Invalid", "Percentage, fixed uplift and unit cost must be numbers."
                 )
                 return
-            pricing_db.create_rule(
+            return pricing_db.create_rule(
                 name=name, uplift_type=type_var.get(), uplift_percent=pct,
                 fixed_uplift=fixed, round_up=round_var.get(), cond_cost_gt=cost_gt,
                 pricing_key=key_var.get().strip(), product_group=group_var.get().strip(),
             )
-            messagebox.showinfo("Saved", f"Pricing rule '{name}' saved.")
-            self.show_pricing_rules()
 
-        cancel = self._discard_guard(self.show_pricing_rules)
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(15, 0))
-        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(save=save, cancel=cancel)
+        self._register_form(save=save, back=self.show_pricing_rules)
 
     # ------------------------------------------------------------------ Purchases

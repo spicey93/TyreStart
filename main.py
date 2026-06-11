@@ -73,7 +73,8 @@ class App(
             "services": (340, [("All Services", self.show_services),
                                ("New Service", self.show_service_form)]),
             "customers": (425, [("All Customers", self.show_customers),
-                                ("New Customer", self.show_customer_form)]),
+                                ("New Customer", self.show_customer_form),
+                                ("New Receipt", self.show_new_receipt)]),
             "sales": (520, [("All Sales", self.show_sales),
                             ("New Sale", self.show_sale_form)]),
         }
@@ -163,50 +164,9 @@ class App(
         "Control_R", "Alt_L", "Alt_R", "Win_L", "Win_R", "Caps_Lock",
     }
 
-    def _bind_form_shortcuts(self, save=None, cancel=None, delete=None):
-        """Keyboard shortcuts for a form view: Ctrl+S save, Ctrl+D delete, Esc
-        cancel. Pass only the actions the form supports (e.g. omit delete when
-        creating). Also starts unsaved-changes tracking so cancel can prompt.
-        Cleared automatically on the next view switch."""
-        self._unbind_form_shortcuts()
-        self._form_shortcuts = []
-        self._form_dirty = False
-
-        def bind(sequence, action):
-            def handler(_event):
-                action()
-                return "break"  # don't let the keystroke fall through to widgets
-            self._form_shortcuts.append((sequence, self.bind(sequence, handler)))
-
-        # Track edits so cancel can ask before discarding. Typing or changing a
-        # dropdown marks the form dirty; line-item changes call mark_form_dirty().
-        def on_key(event):
-            if event.keysym not in self._NAV_KEYS and not event.keysym.startswith("F"):
-                self._form_dirty = True
-        self._form_shortcuts.append(("<Key>", self.bind("<Key>", on_key, add="+")))
-        self._form_shortcuts.append((
-            "<<ComboboxSelected>>",
-            self.bind("<<ComboboxSelected>>", lambda e: self.mark_form_dirty(), add="+"),
-        ))
-
-        if save:
-            bind("<Control-s>", save)
-        if delete:
-            bind("<Control-d>", delete)
-        if cancel:
-            bind("<Escape>", cancel)
-
     def mark_form_dirty(self):
         """Flag the current form as having unsaved changes (e.g. a line added)."""
         self._form_dirty = True
-
-    def _confirm_discard(self):
-        """True if it's safe to leave the form: no edits, or the user confirms."""
-        if getattr(self, "_form_dirty", False):
-            return messagebox.askyesno(
-                "Unsaved changes", "You have unsaved changes. Discard them?"
-            )
-        return True
 
     def _can_leave(self):
         """True if it's OK to leave the current form. With unsaved edits, ask
@@ -260,13 +220,6 @@ class App(
             self._go(back)
             return "break"
         self._form_shortcuts.append(("<Escape>", self.bind("<Escape>", leave)))
-
-    def _discard_guard(self, navigate):
-        """Wrap a navigation action so it first confirms discarding unsaved edits."""
-        def go():
-            if self._confirm_discard():
-                navigate()
-        return go
 
     def _unbind_form_shortcuts(self):
         for sequence, funcid in getattr(self, "_form_shortcuts", []):

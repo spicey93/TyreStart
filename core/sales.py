@@ -225,6 +225,18 @@ def customer_sales(customer_id, outstanding_only=False):
     return result
 
 
+def list_for_customer(customer_id):
+    """All sales for a customer (any status), newest first, with gross total."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT s.id, s.reference, s.status, s.date, "
+            f"COALESCE((SELECT SUM({_SI_GROSS}) FROM sale_items si "
+            "          WHERE si.sale_id = s.id), 0) AS total "
+            "FROM sales s WHERE s.customer_id = ? ORDER BY s.id DESC",
+            (customer_id,),
+        ).fetchall()
+
+
 def list_sales(text="", status=""):
     """List sales (with customer name and gross total) for the list view."""
     like = f"%{text}%"

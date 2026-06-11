@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 
 from core import customers as customer_db
 from core import receipts as receipt_db
+from core import sales as sale_db
 
 from ui.common import make_sortable
 
@@ -85,8 +86,27 @@ class CustomersMixin:
                 return
             self.show_customer_form(customer_db.get_customer(int(selection[0])))
 
+        def delete_selected(event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            customer = customer_db.get_customer(int(selection[0]))
+            if customer and messagebox.askyesno(
+                "Delete customer", f"Delete '{customer['name']}'?"
+            ):
+                customer_db.delete_customer(customer["id"])
+                refresh()
+
         tree.bind("<Double-1>", lambda e: open_selected())
         tree.bind("<Return>", lambda e: open_selected())
+        tree.bind("<Delete>", delete_selected)
+
+        ttk.Label(
+            self.container,
+            text="Double-click or Enter to edit · Delete key to remove the selected customer.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(4, 0))
+
         refresh()
 
     def show_customer_form(self, customer=None):
@@ -100,8 +120,13 @@ class CustomersMixin:
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w", pady=(0, 15))
 
-        form = ttk.Frame(self.container)
-        form.pack(anchor="w")
+        notebook = ttk.Notebook(self.container)
+        notebook.pack(fill="both", expand=True)
+
+        # --- Details tab (the editable fields) ---
+        details = ttk.Frame(notebook, padding=12)
+        notebook.add(details, text="Details")
+
         entries = {}
         fields = [
             ("name", "Name"),
@@ -111,8 +136,8 @@ class CustomersMixin:
             ("phone", "Phone"),
         ]
         for row, (key, label) in enumerate(fields):
-            ttk.Label(form, text=label + ":").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
-            entry = ttk.Entry(form, width=40)
+            ttk.Label(details, text=label + ":").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
+            entry = ttk.Entry(details, width=40)
             entry.grid(row=row, column=1, pady=5)
             if editing:
                 entry.insert(0, customer[key] or "")
@@ -122,11 +147,23 @@ class CustomersMixin:
                 entry.configure(state="readonly")
             entries[key] = entry
 
+        if editing:
+            balance = receipt_db.customer_balance(customer["id"])
+            ttk.Label(
+                details,
+                text=f"Balance owed by customer: {balance:,.2f}",
+                font=("Segoe UI", 12, "bold"),
+            ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(14, 0))
+
+            # --- Receipts & Sales tabs (read-only; existing customer only) ---
+            self._build_customer_receipts_tab(notebook, customer["id"])
+            self._build_customer_sales_tab(notebook, customer["id"])
+
         def save():
             data = {key: entry.get().strip() for key, entry in entries.items()}
             if not data["name"]:
                 messagebox.showwarning("Missing name", "Please enter a customer name.")
-                return
+                return None
             if not editing:
                 data["account_number"] = ""  # let the data layer generate it
             try:
@@ -135,61 +172,69 @@ class CustomersMixin:
                         customer["id"], data["name"], data["account_number"],
                         data["contact"], data["email"], data["phone"],
                     )
-                else:
-                    customer_db.add_customer(
-                        data["name"], data["account_number"],
-                        data["contact"], data["email"], data["phone"],
-                    )
+                    return customer["id"]
+                return customer_db.add_customer(
+                    data["name"], data["account_number"],
+                    data["contact"], data["email"], data["phone"],
+                )
             except customer_db.DuplicateNameError:
                 messagebox.showerror(
                     "Duplicate name", f"A customer named '{data['name']}' already exists."
                 )
-                return
-            messagebox.showinfo("Saved", f"Customer '{data['name']}' saved.")
-            self.show_customers()
+                return None
 
-        def delete_current():
-            if not editing:
-                return
-            if messagebox.askyesno("Delete customer", f"Delete '{customer['name']}'?"):
-                customer_db.delete_customer(customer["id"])
-                self.show_customers()
+        self._register_form(save=save, back=self.show_customers)
 
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(20, 0))
-        cancel = self._discard_guard(self.show_customers)
-        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        if editing:
-            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(
-            save=save, cancel=cancel,
-            delete=delete_current if editing else None,
-        )
+    def _build_customer_receipts_tab(self, notebook, customer_id):
+        """Read-only list of the customer's receipts (new receipts are recorded
+        via the Customers → New Receipt menu)."""
+        tab = ttk.Frame(notebook, padding=12)
+        notebook.add(tab, text="Receipts")
+        columns = ("date", "account", "method", "amount", "sales")
+        headings = ("Date", "Account", "Method", "Amount", "Sales")
+        widths = (90, 160, 70, 90, 200)
+        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        tree.column("amount", anchor="e")
+        make_sortable(tree)
+        tree.pack(fill="both", expand=True)
+        rows = receipt_db.get_receipts(customer_id)
+        for r in rows:
+            tree.insert(
+                "", "end",
+                values=(
+                    r["date"] or "", f"{r['account_code']} - {r['account_name']}",
+                    r["method"] or "", f"{r['amount']:,.2f}", r["sales"] or "",
+                ),
+            )
+        ttk.Label(
+            tab, text=(f"{len(rows)} receipt(s)." if rows else "No receipts yet."),
+        ).pack(anchor="w", pady=(8, 0))
 
-        # Account section: balance + receipt actions (only for an existing customer).
-        if editing:
-            account = ttk.LabelFrame(self.container, text="Account", padding=10)
-            account.pack(anchor="w", fill="x", pady=(20, 0))
-            balance = receipt_db.customer_balance(customer["id"])
-            ttk.Label(
-                account,
-                text=f"Balance owed by customer: {balance:,.2f}",
-                font=("Segoe UI", 12, "bold"),
-            ).pack(anchor="w")
-            acc_btns = ttk.Frame(account)
-            acc_btns.pack(anchor="w", pady=(8, 0))
-            ttk.Button(
-                acc_btns, text="Record Receipt",
-                command=lambda: self.show_receipt_form(customer["id"]),
-            ).pack(side="left")
-            ttk.Button(
-                acc_btns, text="View Receipts",
-                command=lambda: self.show_receipts(customer["id"]),
-            ).pack(side="left", padx=(8, 0))
-            ttk.Button(
-                acc_btns, text="View Sales",
-                command=lambda: self.show_sales(prefill=customer["name"]),
-            ).pack(side="left", padx=(8, 0))
+    def _build_customer_sales_tab(self, notebook, customer_id):
+        """Read-only list of the customer's sales (quotes, orders and invoices)."""
+        tab = ttk.Frame(notebook, padding=12)
+        notebook.add(tab, text="Sales")
+        columns = ("reference", "status", "date", "total")
+        headings = ("Reference", "Status", "Date", "Total")
+        widths = (150, 90, 110, 110)
+        tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width)
+        tree.column("total", anchor="e")
+        make_sortable(tree)
+        tree.pack(fill="both", expand=True)
+        rows = sale_db.list_for_customer(customer_id)
+        for r in rows:
+            tree.insert(
+                "", "end",
+                values=(r["reference"] or "", r["status"], r["date"] or "", f"{r['total']:,.2f}"),
+            )
+        ttk.Label(
+            tab, text=(f"{len(rows)} sale(s)." if rows else "No sales yet."),
+        ).pack(anchor="w", pady=(8, 0))
 
     # ---------------------------------------------------------------------- Sales

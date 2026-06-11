@@ -107,8 +107,28 @@ class PurchasesMixin:
                 return
             self.show_purchase_form(purchase_db.get_purchase(int(selection[0])))
 
+        def delete_selected(event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            if messagebox.askyesno("Delete purchase", "Delete this purchase?"):
+                try:
+                    purchase_db.delete_purchase(int(selection[0]))
+                except Exception as exc:  # e.g. an invoice with payments allocated
+                    messagebox.showerror("Cannot delete", str(exc))
+                    return
+                refresh()
+
         tree.bind("<Double-1>", lambda e: open_selected())
         tree.bind("<Return>", lambda e: open_selected())
+        tree.bind("<Delete>", delete_selected)
+
+        ttk.Label(
+            self.container,
+            text="Double-click or Enter to edit · Delete key to remove the selected purchase.",
+            foreground="#666666",
+        ).pack(anchor="w", pady=(4, 0))
+
         refresh()
 
     def show_purchase_form(self, purchase=None):
@@ -291,33 +311,10 @@ class PurchasesMixin:
                     date_var.get().strip(), items)
             if editing:
                 purchase_db.update_purchase(purchase["id"], *args)
-            else:
-                purchase_db.create_purchase(*args)
-            messagebox.showinfo("Saved", "Purchase saved.")
-            self.show_purchases()
+                return purchase["id"]
+            return purchase_db.create_purchase(*args)
 
-        def delete_current():
-            if not editing:
-                return
-            if messagebox.askyesno("Delete purchase", "Delete this purchase?"):
-                try:
-                    purchase_db.delete_purchase(purchase["id"])
-                except Exception as exc:  # e.g. an invoice with payments allocated
-                    messagebox.showerror("Cannot delete", str(exc))
-                    return
-                self.show_purchases()
-
-        cancel = self._discard_guard(self.show_purchases)
-        btns = ttk.Frame(self.container)
-        btns.pack(anchor="w", pady=(12, 0))
-        ttk.Button(btns, text="Save (Ctrl+S)", command=save).pack(side="left")
-        ttk.Button(btns, text="Cancel (Esc)", command=cancel).pack(side="left", padx=(8, 0))
-        if editing:
-            ttk.Button(btns, text="Delete (Ctrl+D)", command=delete_current).pack(side="left", padx=(8, 0))
-        self._bind_form_shortcuts(
-            save=save, cancel=cancel,
-            delete=delete_current if editing else None,
-        )
+        self._register_form(save=save, back=self.show_purchases)
 
         # Prefill when editing (after the line widgets exist).
         if editing:
