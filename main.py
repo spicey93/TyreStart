@@ -90,7 +90,7 @@ class App(
             "purchases": [("All Purchases", self.show_purchases),
                           ("New Purchase Order", self.show_purchase_order_form),
                           ("New Purchase Invoice", self.show_purchase_invoice_form),
-                          ("New Credit Note", self.show_credit_note)],
+                          ("New Credit Note", self.show_credit_note_form)],
             "services": [("All Services", self.show_services),
                          ("New Service", self.show_service_form)],
             "customers": [("All Customers", self.show_customers),

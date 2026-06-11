@@ -185,9 +185,29 @@ For a record that owns a list of sub-rows (e.g. a Purchase with product lines):
 
 ## Purchase documents (orders, invoices, credit notes)
 - The Purchases menu has **All Purchases · New Purchase Order · New Purchase Invoice ·
-  New Credit Note** (credit notes are a not-yet-built placeholder). Each document type
-  has its own form; `open_purchase(row)` routes an existing purchase to the right one by
-  `status`.
+  New Credit Note**. Each document type has its own form; `open_purchase(row)` routes an
+  existing purchase to the right one by `status` (Order / Invoice / Credit Note).
+- Each purchase form has an **Actions panel** — a bordered `ttk.LabelFrame(text="Actions")`
+  packed directly under the Details panel and above the lines table — holding that
+  document's buttons (**Add Product** always; plus **Receive / Deliver** on an editable PO,
+  or **Create Credit Note** on a saved invoice). The lines editor no longer renders its own
+  Add Product button; it exposes an `add` callback the Actions panel wires up. Keep
+  document-level actions here rather than loose at the bottom of the page.
+- **Credit Notes** (supplier returns/corrections) have **two entry points**: *New Credit
+  Note* from the menu opens a **blank** note where you **Add Product** from stock to return;
+  or a saved invoice's **Create Credit Note** button (`show_credit_note_form(from_invoice=…)`)
+  **seeds** the note with the invoice's lines and links it (`po_reference` = invoice number).
+  The number is auto-generated (`CN0001`, via `next_reference`); there are free-text
+  `credit_reference` / `return_reference` fields. Each line shows Stock Code / Description /
+  Invoiced (blank for stock-added lines) / **Returned** (editable) / Unit Cost / Net Total —
+  the single **Returned** qty drives the net total, the **stock-out** and the **balance
+  reduction** (we deliberately don't separate "credited" money from "returned" goods).
+  A credit note subtracts its quantities from stock (`STOCK_EXPR` / `product_stock` sign by
+  status) and its gross from the supplier balance (`supplier_balance` =
+  invoices − credit notes − payments). It isn't payment-allocatable and doesn't affect
+  average cost (invoice-based). Products added from stock default their unit cost to the
+  product's average cost. (A separate physical *Return Note* could be added later if
+  returns-awaiting-credit ever needs tracking; today one document does both.)
 - **Purchase Orders** capture supplier + date only and get an **auto PO number**
   (`PO0001`, via `purchases.next_po_number`) stored in `reference`; status isn't shown.
 - **Receiving**: an Order's *Receive / Deliver* button opens a modal defaulting every

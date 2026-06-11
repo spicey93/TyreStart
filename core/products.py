@@ -220,12 +220,13 @@ def create_product(description, brand="", model="", ean="", manufacturer_code=""
         return cursor.lastrowid
 
 
-# Current stock = invoiced purchases - sold quantities (sale Orders and Invoices).
-# Purchase Orders and sale Quotes don't count.
+# Current stock = invoiced purchases (minus credit-noted returns) - sold quantities
+# (sale Orders and Invoices). Purchase Orders and sale Quotes don't count.
 STOCK_EXPR = (
-    "(COALESCE((SELECT SUM(pi.quantity) FROM purchase_items pi "
+    "(COALESCE((SELECT SUM(CASE pu.status WHEN 'Invoice' THEN pi.quantity "
+    "WHEN 'Credit Note' THEN -pi.quantity ELSE 0 END) FROM purchase_items pi "
     "JOIN purchases pu ON pu.id = pi.purchase_id "
-    "WHERE pi.product_id = products.id AND pu.status = 'Invoice'), 0) "
+    "WHERE pi.product_id = products.id), 0) "
     "- COALESCE((SELECT SUM(si.quantity) FROM sale_items si "
     "JOIN sales sa ON sa.id = si.sale_id "
     "WHERE si.product_id = products.id AND sa.status IN ('Order', 'Invoice')), 0))"
@@ -349,9 +350,10 @@ def product_stock(product_id):
     """Current stock = invoiced purchases - sold (sale Orders and Invoices)."""
     with get_connection() as conn:
         purchased = conn.execute(
-            "SELECT COALESCE(SUM(pi.quantity), 0) FROM purchase_items pi "
-            "JOIN purchases pu ON pu.id = pi.purchase_id "
-            "WHERE pi.product_id = ? AND pu.status = 'Invoice'",
+            "SELECT COALESCE(SUM(CASE pu.status WHEN 'Invoice' THEN pi.quantity "
+            "WHEN 'Credit Note' THEN -pi.quantity ELSE 0 END), 0) "
+            "FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id "
+            "WHERE pi.product_id = ?",
             (product_id,),
         ).fetchone()[0]
         sold = conn.execute(

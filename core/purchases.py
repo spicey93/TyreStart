@@ -1,15 +1,17 @@
 """Purchases data-access layer.
 
-A purchase is either an 'Order' or an 'Invoice', belongs to a supplier, and has
-a date, a reference and one or more product lines (quantity + cost price).
-Stored in the central app.db alongside the other entities.
+A purchase is an 'Order', an 'Invoice' or a 'Credit Note', belongs to a supplier,
+and has a date, a reference and one or more product lines (quantity + cost price).
+Invoices bring stock in and add to the supplier balance; Credit Notes (supplier
+returns/corrections) take stock out and reduce the balance; Orders do neither
+until received. Stored in the central app.db alongside the other entities.
 """
 
 import datetime
 
 from core.database import get_connection
 
-STATUSES = ("Order", "Invoice")
+STATUSES = ("Order", "Invoice", "Credit Note")
 
 # VAT: cost prices are stored NET; the rate (percent) is per line, default 20%.
 DEFAULT_VAT_RATE = 20.0
@@ -37,7 +39,9 @@ def create_table():
                 supplier_id  INTEGER NOT NULL REFERENCES suppliers(id),
                 status       TEXT NOT NULL,
                 reference    TEXT,
-                po_reference TEXT,        -- on an Invoice: the PO number it came from
+                po_reference TEXT,        -- Invoice: source PO no.; Credit Note: invoice no.
+                credit_reference TEXT,    -- credit note only: supplier's credit reference
+                return_reference TEXT,    -- credit note only: goods-return reference
                 date         TEXT,
                 reconciled   INTEGER NOT NULL DEFAULT 0,
                 received     INTEGER NOT NULL DEFAULT 0,  -- a PO that's been received
@@ -57,6 +61,11 @@ def create_table():
             conn.execute(
                 "ALTER TABLE purchases ADD COLUMN received INTEGER NOT NULL DEFAULT 0"
             )
+        # Credit-note-only free-text references (the supplier's credit ref / return ref).
+        if "credit_reference" not in pcols:
+            conn.execute("ALTER TABLE purchases ADD COLUMN credit_reference TEXT")
+        if "return_reference" not in pcols:
+            conn.execute("ALTER TABLE purchases ADD COLUMN return_reference TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS purchase_items (
@@ -91,6 +100,8 @@ def create_table():
 
 
 PO_PREFIX = "PO"
+# Statuses whose reference is auto-generated, with their number prefix.
+_REF_PREFIX = {"Order": "PO", "Credit Note": "CN"}
 
 
 def _insert_items(conn, purchase_id, items):
@@ -106,18 +117,23 @@ def _insert_items(conn, purchase_id, items):
     )
 
 
-def next_po_number(conn=None):
-    """The next sequential purchase-order number, e.g. 'PO0001'."""
+def next_reference(status, conn=None):
+    """Next sequential auto number for a status (PO0001 for Orders, CN0001 for
+    Credit Notes), or '' for statuses that use a manual reference."""
+    prefix = _REF_PREFIX.get(status)
+    if not prefix:
+        return ""
+
     def compute(c):
         highest = 0
         for row in c.execute(
-            "SELECT reference AS r FROM purchases "
-            "WHERE status = 'Order' AND reference LIKE ?", (PO_PREFIX + "%",)
+            "SELECT reference AS r FROM purchases WHERE status = ? AND reference LIKE ?",
+            (status, prefix + "%"),
         ):
-            digits = (row["r"] or "")[len(PO_PREFIX):]
+            digits = (row["r"] or "")[len(prefix):]
             if digits.isdigit():
                 highest = max(highest, int(digits))
-        return f"{PO_PREFIX}{highest + 1:04d}"
+        return f"{prefix}{highest + 1:04d}"
 
     if conn is not None:
         return compute(conn)
@@ -125,22 +141,29 @@ def next_po_number(conn=None):
         return compute(conn)
 
 
+def next_po_number(conn=None):
+    """The next sequential purchase-order number, e.g. 'PO0001'."""
+    return next_reference("Order", conn)
+
+
 def create_purchase(supplier_id, status, reference, date, items, reconciled=0,
-                    po_reference=""):
+                    po_reference="", credit_reference="", return_reference=""):
     """Insert a purchase with its line items. Returns the new purchase id.
 
-    A purchase **Order** with no reference is given the next auto PO number;
-    Invoices keep the (manually entered) reference. `po_reference` links an
-    invoice back to the PO number it was raised from.
+    Orders and Credit Notes with no reference are given the next auto number
+    (PO… / CN…); Invoices keep the manually entered reference. `po_reference` links
+    an invoice to its PO number, or a credit note to the invoice number it credits.
     """
     with get_connection() as conn:
-        if status == "Order" and not reference:
-            reference = next_po_number(conn)
+        if not reference:
+            reference = next_reference(status, conn)
         cursor = conn.execute(
             "INSERT INTO purchases "
-            "(supplier_id, status, reference, po_reference, date, reconciled, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (supplier_id, status, reference, po_reference, date, int(reconciled), _now()),
+            "(supplier_id, status, reference, po_reference, credit_reference, "
+            " return_reference, date, reconciled, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (supplier_id, status, reference, po_reference, credit_reference,
+             return_reference, date, int(reconciled), _now()),
         )
         purchase_id = cursor.lastrowid
         _insert_items(conn, purchase_id, items)
@@ -148,14 +171,16 @@ def create_purchase(supplier_id, status, reference, date, items, reconciled=0,
 
 
 def update_purchase(purchase_id, supplier_id, status, reference, date, items,
-                    reconciled=0, po_reference=""):
+                    reconciled=0, po_reference="", credit_reference="",
+                    return_reference=""):
     """Update a purchase, replacing all of its line items."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE purchases SET supplier_id = ?, status = ?, reference = ?, "
-            "po_reference = ?, date = ?, reconciled = ? WHERE id = ?",
-            (supplier_id, status, reference, po_reference, date, int(reconciled),
-             purchase_id),
+            "po_reference = ?, credit_reference = ?, return_reference = ?, "
+            "date = ?, reconciled = ? WHERE id = ?",
+            (supplier_id, status, reference, po_reference, credit_reference,
+             return_reference, date, int(reconciled), purchase_id),
         )
         conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
         _insert_items(conn, purchase_id, items)
@@ -172,7 +197,8 @@ def get_purchase(purchase_id):
     with get_connection() as conn:
         return conn.execute(
             "SELECT pu.id, pu.supplier_id, pu.status, pu.reference, pu.po_reference, "
-            "pu.date, pu.reconciled, pu.received, s.name AS supplier_name "
+            "pu.credit_reference, pu.return_reference, pu.date, pu.reconciled, "
+            "pu.received, s.name AS supplier_name "
             "FROM purchases pu JOIN suppliers s ON s.id = pu.supplier_id "
             "WHERE pu.id = ?",
             (purchase_id,),

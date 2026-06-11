@@ -6,6 +6,7 @@ from ui import dialogs as messagebox
 
 from core import suppliers as db
 from core import purchases as purchase_db
+from core import products as product_db
 from core import money
 
 from ui.common import AutocompleteCombobox, make_sortable
@@ -37,8 +38,8 @@ class PurchasesMixin:
 
         ttk.Label(bar, text="Status:").grid(row=0, column=2, sticky="w")
         status_combo = ttk.Combobox(
-            bar, state="readonly", width=10, textvariable=status_choice,
-            values=["All", "Order", "Invoice"],
+            bar, state="readonly", width=12, textvariable=status_choice,
+            values=["All", "Order", "Invoice", "Credit Note"],
         )
         status_combo.grid(row=0, column=3, sticky="w", padx=(8, 10))
         status_combo.current(0)
@@ -133,9 +134,11 @@ class PurchasesMixin:
         refresh()
 
     def open_purchase(self, purchase):
-        """Open a purchase in the right editor for its type (Order vs Invoice)."""
+        """Open a purchase in the right editor for its type."""
         if purchase["status"] == "Order":
             self.show_purchase_order_form(purchase)
+        elif purchase["status"] == "Credit Note":
+            self.show_credit_note_form(purchase)
         else:
             self.show_purchase_invoice_form(purchase)
 
@@ -150,15 +153,15 @@ class PurchasesMixin:
         return None
 
     def _purchase_lines_editor(self, parent, editable=True):
-        """Build the product-lines editor (Add Product + table + totals).
+        """Build the product-lines table + totals (the table only — the Add Product
+        button lives in the form's Actions panel and calls the returned `add`).
 
         Lines are removed by pressing Delete on a row or setting its Qty to 0.
         When `editable` is False the lines are shown read-only. Returns a dict with
-        `lines` (the working list) and `refresh()`.
+        `lines` (the working list), `refresh()` and `add()` (opens the picker).
         """
-        header = ttk.Frame(parent)
-        header.pack(fill="x", pady=(15, 5))
-        ttk.Label(header, text="Products", font=("Consolas", 12, "bold")).pack(side="left")
+        ttk.Label(parent, text="Products", font=("Consolas", 12, "bold")).pack(
+            anchor="w", pady=(15, 5))
 
         lines = []
 
@@ -167,11 +170,8 @@ class PurchasesMixin:
             refresh_lines()
             self.mark_form_dirty()
 
-        if editable:
-            ttk.Button(
-                header, text="Add Product",
-                command=lambda: self.open_product_allocation(receive_basket),
-            ).pack(side="left", padx=(12, 0))
+        def add_product():
+            self.open_product_allocation(receive_basket)
 
         lt_frame = ttk.Frame(parent)
         lt_frame.pack(fill="both", expand=True, pady=(8, 0))
@@ -273,7 +273,7 @@ class PurchasesMixin:
                 text="Double-click Qty/Cost to edit · set Qty to 0 or press Delete to remove a line.",
             ).pack(anchor="w", pady=(4, 0))
 
-        return {"lines": lines, "refresh": refresh_lines, "tree": tree}
+        return {"lines": lines, "refresh": refresh_lines, "tree": tree, "add": add_product}
 
     def _prefill_lines(self, editor, purchase_id):
         for it in purchase_db.get_purchase_items(purchase_id):
@@ -321,13 +321,16 @@ class PurchasesMixin:
             ttk.Label(head, text="✓ Received — order locked", style="Hint.TLabel").grid(
                 row=1, column=2, columnspan=2, sticky="w", pady=6, padx=(30, 0))
 
+        actions = ttk.LabelFrame(self.container, text="Actions", padding=8)
+        if not received:
+            actions.pack(fill="x", pady=(12, 0))
         editor = self._purchase_lines_editor(self.container, editable=not received)
-
-        if editing and not received:
-            actions = ttk.Frame(self.container)
-            actions.pack(fill="x", pady=(8, 0))
-            ttk.Button(actions, text="Receive / Deliver",
-                       command=lambda: self._receive_purchase_order(purchase["id"])).pack(side="left")
+        if not received:
+            ttk.Button(actions, text="Add Product", command=editor["add"]).pack(side="left")
+            if editing:
+                ttk.Button(actions, text="Receive / Deliver",
+                           command=lambda: self._receive_purchase_order(purchase["id"])).pack(
+                    side="left", padx=(8, 0))
 
         def save():
             if received:
@@ -424,40 +427,281 @@ class PurchasesMixin:
         ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side="left", padx=(8, 0))
 
     def show_purchase_invoice_form(self, purchase=None):
-        """Create/edit a purchase invoice: supplier, date, the (manually entered)
-        purchase-invoice number, an optional PO number it's linked to, product
-        lines and a reconciled flag."""
+        """Create/edit a purchase invoice (manually entered invoice number, optional
+        linked PO number)."""
+        self._purchase_document_form(
+            purchase, "Invoice", panel_title="Purchase Invoice",
+            new_title="New Purchase Invoice", edit_title="Edit Purchase Invoice",
+            number_label="Invoice No", link_label="PO Number")
+
+    def show_credit_note_form(self, purchase=None, from_invoice=None):
+        """Create/edit a purchase credit note.
+
+        Two entry points: from the menu it opens **blank** — add products from
+        stock to return; or from a purchase invoice's *Create Credit Note* button
+        it's **seeded** with that invoice's lines (`from_invoice`) so you set a
+        Returned qty per line and it's linked to that invoice. The Returned qty
+        drives the net total, the stock-out and the supplier-balance reduction.
+        The number is auto-generated; Credit Ref / Return Ref are free text."""
         self.current_view = "purchase_form"
         self._clear_container()
         editing = purchase is not None
 
         ttk.Label(
-            self.container, text="Edit Purchase Invoice" if editing else "New Purchase Invoice",
+            self.container, text="Edit Credit Note" if editing else "New Credit Note",
             font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
-        head = ttk.LabelFrame(self.container, text="Purchase Invoice", padding=12)
+        head = ttk.LabelFrame(self.container, text="Credit Note", padding=12)
         head.pack(anchor="w", fill="x")
         supplier_by_name = {s["name"]: s["id"] for s in db.get_all_suppliers()}
         supplier_var = tk.StringVar()
-        invoice_no_var = tk.StringVar()
-        po_ref_var = tk.StringVar()
+        credit_ref_var = tk.StringVar()
+        return_ref_var = tk.StringVar()
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
-        reconciled_var = tk.BooleanVar(value=bool(editing and purchase["reconciled"]))
 
-        # Left column: Supplier / Invoice No.
+        # The invoice this note credits (if any) — set when seeded or editing.
+        if from_invoice is not None:
+            linked_ref = from_invoice["reference"] or ""
+        elif editing:
+            linked_ref = purchase["po_reference"] or ""
+        else:
+            linked_ref = ""
+
+        # Left column: Supplier / Date.
         ttk.Label(head, text="Supplier:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
         supplier_combo = AutocompleteCombobox(head, textvariable=supplier_var, width=30)
         supplier_combo.set_completion_list(list(supplier_by_name.keys()))
         supplier_combo.grid(row=0, column=1, sticky="w", pady=6)
 
-        ttk.Label(head, text="Invoice No:").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
-        invoice_entry = ttk.Entry(head, textvariable=invoice_no_var, width=32)
-        invoice_entry.grid(row=1, column=1, sticky="w", pady=6)
+        ttk.Label(head, text="Date:").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
+        ttk.Entry(head, textvariable=date_var, width=20).grid(row=1, column=1, sticky="w", pady=6)
 
-        # Right column: PO Number (the link) / Date.
-        ttk.Label(head, text="PO Number:").grid(row=0, column=2, sticky="w", pady=6, padx=(30, 10))
-        ttk.Entry(head, textvariable=po_ref_var, width=24).grid(row=0, column=3, sticky="w", pady=6)
+        ttk.Label(head, text="Invoice:").grid(row=2, column=0, sticky="w", pady=6, padx=(0, 10))
+        ttk.Label(head, text=linked_ref or "—", font=("Consolas", 11, "bold")).grid(
+            row=2, column=1, sticky="w", pady=6)
+
+        # Right column: CN number (auto) / Credit Ref / Return Ref.
+        ttk.Label(head, text="Credit Note No:").grid(row=0, column=2, sticky="w", pady=6, padx=(30, 10))
+        cn_number = purchase["reference"] if editing else "(auto-generated on save)"
+        ttk.Label(head, text=cn_number, font=("Consolas", 11, "bold")).grid(
+            row=0, column=3, sticky="w", pady=6)
+
+        ttk.Label(head, text="Credit Ref:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=credit_ref_var, width=24).grid(row=1, column=3, sticky="w", pady=6)
+
+        ttk.Label(head, text="Return Ref:").grid(row=2, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=return_ref_var, width=24).grid(row=2, column=3, sticky="w", pady=6)
+
+        # --- Actions (above the lines, like the other purchase forms) ---
+        actions = ttk.LabelFrame(self.container, text="Actions", padding=8)
+        actions.pack(fill="x", pady=(12, 0))
+
+        # --- Credit lines ---
+        ttk.Label(self.container, text="Lines to return", font=("Consolas", 12, "bold")).pack(
+            anchor="w", pady=(15, 5))
+
+        lines = []
+
+        def receive_basket(items):
+            for it in items:  # products added from stock to return
+                lines.append({
+                    "product_id": it["product_id"], "stock_code": it["stock_code"],
+                    "description": it["description"], "invoiced": None,
+                    "returned": it["quantity"], "cost_price": it["cost_price"],
+                    "vat_rate": it["vat_rate"],
+                })
+            refresh_grid()
+            self.mark_form_dirty()
+
+        ttk.Button(
+            actions, text="Add Product",
+            command=lambda: self.open_product_allocation(
+                receive_basket, price_label="Unit Cost (net)",
+                price_fn=lambda p: product_db.average_cost(p["id"])),
+        ).pack(side="left")
+
+        lt_frame = ttk.Frame(self.container)
+        lt_frame.pack(fill="both", expand=True, pady=(4, 0))
+        columns = ("stock_code", "description", "invoiced", "returned", "cost", "net")
+        headings = ("Stock Code", "Description", "Invoiced", "Returned", "Unit Cost", "Net Total")
+        widths = (120, 240, 70, 70, 80, 100)
+        tree = ttk.Treeview(lt_frame, columns=columns, show="headings", height=7)
+        for col, heading, width in zip(columns, headings, widths):
+            tree.heading(col, text=heading)
+            tree.column(col, width=width,
+                        anchor=("e" if col in ("invoiced", "returned", "cost", "net") else "w"))
+        make_sortable(tree)
+        ls = ttk.Scrollbar(lt_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=ls.set)
+        ls.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+
+        total_label = ttk.Label(self.container, text="Net 0.00   VAT 0.00   Gross 0.00",
+                                font=("Consolas", 10, "bold"))
+        total_label.pack(anchor="e", pady=(6, 0))
+        ttk.Label(self.container, style="Hint.TLabel",
+                  text="Double-click Returned to change the qty (0 to skip) · "
+                       "Delete removes a line.").pack(anchor="w", pady=(4, 0))
+
+        def refresh_grid():
+            tree.delete(*tree.get_children())
+            net_total = vat_total = gross_total = 0.0
+            for i, ln in enumerate(lines):
+                net, vat, gross = money.line_amounts(ln["returned"], ln["cost_price"], ln["vat_rate"])
+                net_total += net
+                vat_total += vat
+                gross_total += gross
+                tree.insert("", "end", iid=str(i), values=(
+                    ln["stock_code"], ln["description"],
+                    "" if ln["invoiced"] is None else ln["invoiced"], ln["returned"],
+                    f"{ln['cost_price']:.2f}", f"{net:,.2f}"))
+            total_label.config(
+                text=f"Net {net_total:,.2f}   VAT {vat_total:,.2f}   Gross {gross_total:,.2f}")
+
+        def edit_returned(event):
+            if tree.identify("region", event.x, event.y) != "cell":
+                return
+            if tree.identify_column(event.x) != "#4":  # Returned only
+                return
+            rowid = tree.identify_row(event.y)
+            if not rowid:
+                return
+            index = int(rowid)
+            bbox = tree.bbox(rowid, "#4")
+            if not bbox:
+                return
+            x, y, w, h = bbox
+            editor = ttk.Entry(tree)
+            editor.place(x=x, y=y, width=w, height=h)
+            editor.insert(0, str(lines[index]["returned"]))
+            editor.select_range(0, "end")
+            editor.focus_set()
+
+            def commit(_=None):
+                raw = editor.get().strip()
+                try:
+                    value = int(raw)
+                    if value < 0:
+                        raise ValueError
+                except ValueError:
+                    editor.destroy()
+                    return
+                editor.destroy()
+                lines[index]["returned"] = value
+                refresh_grid()
+                self.mark_form_dirty()
+
+            editor.bind("<Return>", commit)
+            editor.bind("<FocusOut>", commit)
+            editor.bind("<Escape>", lambda e: editor.destroy())
+
+        def delete_selected(event=None):
+            sel = tree.selection()
+            if sel:
+                del lines[int(sel[0])]
+                refresh_grid()
+                self.mark_form_dirty()
+            return "break"
+
+        tree.bind("<Double-1>", edit_returned)
+        tree.bind("<Delete>", delete_selected)
+
+        def save():
+            supplier_id = self._resolve_supplier(supplier_by_name, supplier_var.get())
+            if supplier_id is None:
+                messagebox.showwarning("Supplier", "Please choose a valid supplier.")
+                return None
+            items = [
+                {"product_id": ln["product_id"], "quantity": ln["returned"],
+                 "cost_price": ln["cost_price"], "vat_rate": ln["vat_rate"]}
+                for ln in lines if ln["returned"] > 0
+            ]
+            if not items:
+                messagebox.showwarning("Nothing to return",
+                                       "Add a product and/or set a Returned quantity.")
+                return None
+            reference = purchase["reference"] if editing else ""
+            args = (supplier_id, "Credit Note", reference, date_var.get().strip(), items,
+                    int(editing and purchase["reconciled"]), linked_ref,
+                    credit_ref_var.get().strip(), return_ref_var.get().strip())
+            if editing:
+                purchase_db.update_purchase(purchase["id"], *args)
+                return purchase["id"]
+            return purchase_db.create_purchase(*args)
+
+        self._register_form(save=save, back=self.show_purchases)
+
+        if from_invoice is not None:  # seeded from an invoice: pull its lines
+            supplier_var.set(from_invoice["supplier_name"])
+            for it in purchase_db.get_purchase_items(from_invoice["id"]):
+                lines.append({
+                    "product_id": it["product_id"], "stock_code": it["stock_code"],
+                    "description": it["description"], "invoiced": it["quantity"],
+                    "returned": it["quantity"], "cost_price": it["cost_price"],
+                    "vat_rate": it["vat_rate"]})
+            refresh_grid()
+            self.mark_form_dirty()
+        elif editing:
+            supplier_var.set(purchase["supplier_name"])
+            credit_ref_var.set(purchase["credit_reference"] or "")
+            return_ref_var.set(purchase["return_reference"] or "")
+            date_var.set(purchase["date"] or "")
+            # Look up the credited invoice's quantities for the Invoiced column.
+            invoiced_by_product = {}
+            if linked_ref:
+                for inv in purchase_db.supplier_invoices(purchase["supplier_id"]):
+                    if (inv["reference"] or "") == linked_ref:
+                        invoiced_by_product = {
+                            it["product_id"]: it["quantity"]
+                            for it in purchase_db.get_purchase_items(inv["id"])}
+                        break
+            for it in purchase_db.get_purchase_items(purchase["id"]):
+                lines.append({
+                    "product_id": it["product_id"], "stock_code": it["stock_code"],
+                    "description": it["description"],
+                    "invoiced": invoiced_by_product.get(it["product_id"]),
+                    "returned": it["quantity"], "cost_price": it["cost_price"],
+                    "vat_rate": it["vat_rate"]})
+            refresh_grid()
+
+    def _purchase_document_form(self, purchase, status, *, panel_title, new_title,
+                                edit_title, number_label, link_label):
+        """Shared editor for the invoice-style purchase documents (Purchase Invoice
+        and Credit Note). Both carry a manually-entered document number
+        (`reference`), an optional linked document number (`po_reference`), a date,
+        product lines and a reconciled flag — only the wording and status differ."""
+        self.current_view = "purchase_form"
+        self._clear_container()
+        editing = purchase is not None
+
+        ttk.Label(
+            self.container, text=edit_title if editing else new_title,
+            font=("Consolas", 20, "bold"),
+        ).pack(anchor="w", pady=(0, 12))
+
+        head = ttk.LabelFrame(self.container, text=panel_title, padding=12)
+        head.pack(anchor="w", fill="x")
+        supplier_by_name = {s["name"]: s["id"] for s in db.get_all_suppliers()}
+        supplier_var = tk.StringVar()
+        number_var = tk.StringVar()
+        link_var = tk.StringVar()
+        date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
+        reconciled_var = tk.BooleanVar(value=bool(editing and purchase["reconciled"]))
+
+        # Left column: Supplier / document number.
+        ttk.Label(head, text="Supplier:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
+        supplier_combo = AutocompleteCombobox(head, textvariable=supplier_var, width=30)
+        supplier_combo.set_completion_list(list(supplier_by_name.keys()))
+        supplier_combo.grid(row=0, column=1, sticky="w", pady=6)
+
+        ttk.Label(head, text=number_label + ":").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
+        number_entry = ttk.Entry(head, textvariable=number_var, width=32)
+        number_entry.grid(row=1, column=1, sticky="w", pady=6)
+
+        # Right column: linked document number / date.
+        ttk.Label(head, text=link_label + ":").grid(row=0, column=2, sticky="w", pady=6, padx=(30, 10))
+        ttk.Entry(head, textvariable=link_var, width=24).grid(row=0, column=3, sticky="w", pady=6)
 
         ttk.Label(head, text="Date:").grid(row=1, column=2, sticky="w", pady=6, padx=(30, 10))
         ttk.Entry(head, textvariable=date_var, width=24).grid(row=1, column=3, sticky="w", pady=6)
@@ -466,17 +710,26 @@ class PurchasesMixin:
                         command=self.mark_form_dirty).grid(
             row=2, column=2, columnspan=2, sticky="w", pady=(6, 0))
 
+        actions = ttk.LabelFrame(self.container, text="Actions", padding=8)
+        actions.pack(fill="x", pady=(12, 0))
         editor = self._purchase_lines_editor(self.container, editable=True)
+        ttk.Button(actions, text="Add Product", command=editor["add"]).pack(side="left")
+        # From a saved invoice you can raise a credit note seeded with its lines.
+        if editing and status == "Invoice":
+            ttk.Button(
+                actions, text="Create Credit Note",
+                command=lambda: (setattr(self, "_form_dirty", False),
+                                 self.show_credit_note_form(from_invoice=purchase))[-1],
+            ).pack(side="left", padx=(8, 0))
 
         def save():
             supplier_id = self._resolve_supplier(supplier_by_name, supplier_var.get())
             if supplier_id is None:
                 messagebox.showwarning("Supplier", "Please choose a valid supplier.")
                 return None
-            invoice_no = invoice_no_var.get().strip()
-            if not invoice_no:
-                messagebox.showwarning("Invoice number",
-                                       "Please enter the purchase invoice number.")
+            number = number_var.get().strip()
+            if not number:
+                messagebox.showwarning(number_label, f"Please enter the {number_label}.")
                 return None
             if not editor["lines"]:
                 messagebox.showwarning("No products", "Add at least one product line.")
@@ -486,8 +739,8 @@ class PurchasesMixin:
                  "cost_price": ln["cost_price"], "vat_rate": ln["vat_rate"]}
                 for ln in editor["lines"]
             ]
-            args = (supplier_id, "Invoice", invoice_no, date_var.get().strip(), items,
-                    int(reconciled_var.get()), po_ref_var.get().strip())
+            args = (supplier_id, status, number, date_var.get().strip(), items,
+                    int(reconciled_var.get()), link_var.get().strip())
             if editing:
                 purchase_db.update_purchase(purchase["id"], *args)
                 return purchase["id"]
@@ -497,22 +750,12 @@ class PurchasesMixin:
 
         if editing:
             supplier_var.set(purchase["supplier_name"])
-            invoice_no_var.set(purchase["reference"] or "")
-            po_ref_var.set(purchase["po_reference"] or "")
+            number_var.set(purchase["reference"] or "")
+            link_var.set(purchase["po_reference"] or "")
             date_var.set(purchase["date"] or "")
             self._prefill_lines(editor, purchase["id"])
-            # Raised from a PO: the invoice number is what's still needed.
+            # Raised from a PO (blank number): the document number is what's needed.
             if not purchase["reference"]:
-                invoice_entry.focus_set()
-
-    def show_credit_note(self):
-        """Placeholder for the upcoming Credit Note feature."""
-        self.current_view = "credit_note"
-        self._clear_container()
-        ttk.Label(self.container, text="New Credit Note", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(
-            self.container,
-            text="Credit notes aren't built yet — coming soon.",
-        ).pack(anchor="w", pady=(10, 0))
+                number_entry.focus_set()
 
     # ------------------------------------------------------- Product Allocation

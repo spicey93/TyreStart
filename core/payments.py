@@ -131,17 +131,19 @@ def get_payments(supplier_id):
 
 
 def supplier_balance(supplier_id):
-    """Supplier balance = sum of invoice totals - sum of payments."""
+    """Supplier balance = invoices - credit notes - payments (all gross)."""
     with get_connection() as conn:
-        invoiced = conn.execute(
-            "SELECT COALESCE(SUM(pi.quantity * pi.cost_price * "
+        # Invoices add to the balance; Credit Notes reduce it (signed per status).
+        net_invoiced = conn.execute(
+            "SELECT COALESCE(SUM(CASE pu.status WHEN 'Invoice' THEN 1 "
+            "WHEN 'Credit Note' THEN -1 ELSE 0 END * pi.quantity * pi.cost_price * "
             "(1 + COALESCE(pi.vat_rate, 20) / 100.0)), 0) "
             "FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id "
-            "WHERE pu.supplier_id = ? AND pu.status = 'Invoice'",
+            "WHERE pu.supplier_id = ?",
             (supplier_id,),
         ).fetchone()[0]
         paid = conn.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM payments WHERE supplier_id = ?",
             (supplier_id,),
         ).fetchone()[0]
-    return round(invoiced - paid, 2)
+    return round(net_invoiced - paid, 2)
