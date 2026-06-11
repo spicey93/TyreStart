@@ -34,6 +34,7 @@ def init_db():
     from core import sales
     from core import receipts
     from core import pricing
+    from core import lookups
 
     suppliers.create_table()
     products.create_table()
@@ -45,3 +46,4 @@ def init_db():
     sales.create_table()
     receipts.create_table()
     pricing.create_table()
+    lookups.create_table()

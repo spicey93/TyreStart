@@ -118,12 +118,6 @@ class SalesMixin:
         tree.bind("<Return>", lambda e: open_selected())
         tree.bind("<Delete>", delete_selected)
 
-        ttk.Label(
-            self.container,
-            text="Double-click or Enter to edit · Delete key to remove the selected sale.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(4, 0))
-
         refresh()
 
     def show_sale_form(self, sale=None, prefill_product=None, prefill_service=None):
@@ -269,10 +263,6 @@ class SalesMixin:
             font=("Consolas", 10, "bold")
         )
         total_label.pack(anchor="e", pady=(6, 0))
-        ttk.Label(
-            self.container, style="Hint.TLabel",
-            text="Double-click Qty/Unit Price to edit · set Qty to 0 or press Delete to remove a line.",
-        ).pack(anchor="w", pady=(4, 0))
 
         def refresh_lines():
             lines_tree.delete(*lines_tree.get_children())
@@ -432,10 +422,6 @@ class SalesMixin:
             entry = ttk.Entry(frame, width=34)
             entry.grid(row=row, column=1, pady=4)
             entries[key] = entry
-        ttk.Label(
-            frame, text="Account # is generated automatically.", foreground="#C9A227"
-        ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(6, 0))
-
         def save():
             data = {key: entry.get().strip() for key, entry in entries.items()}
             if not data["name"]:

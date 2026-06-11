@@ -125,12 +125,6 @@ class PurchasesMixin:
         tree.bind("<Return>", lambda e: open_selected())
         tree.bind("<Delete>", delete_selected)
 
-        ttk.Label(
-            self.container,
-            text="Double-click or Enter to edit · Delete key to remove the selected purchase.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(4, 0))
-
         refresh()
 
     def open_purchase(self, purchase):
@@ -268,10 +262,6 @@ class PurchasesMixin:
         if editable:
             tree.bind("<Double-1>", edit_cell)
             tree.bind("<Delete>", delete_selected)
-            ttk.Label(
-                parent, style="Hint.TLabel",
-                text="Double-click Qty/Cost to edit · set Qty to 0 or press Delete to remove a line.",
-            ).pack(anchor="w", pady=(4, 0))
 
         return {"lines": lines, "refresh": refresh_lines, "tree": tree, "add": add_product}
 
@@ -540,9 +530,6 @@ class PurchasesMixin:
         total_label = ttk.Label(self.container, text="Net 0.00   VAT 0.00   Gross 0.00",
                                 font=("Consolas", 10, "bold"))
         total_label.pack(anchor="e", pady=(6, 0))
-        ttk.Label(self.container, style="Hint.TLabel",
-                  text="Double-click Returned to change the qty (0 to skip) · "
-                       "Delete removes a line.").pack(anchor="w", pady=(4, 0))
 
         def refresh_grid():
             tree.delete(*tree.get_children())

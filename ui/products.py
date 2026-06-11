@@ -5,6 +5,7 @@ from ui import dialogs as messagebox
 
 from core import products as product_db
 from core import pricing as pricing_db
+from core import lookups as lookups_db
 
 from ui.common import AutocompleteCombobox, make_sortable
 
@@ -253,8 +254,18 @@ class ProductsMixin:
             self.container, text="Back to Products", command=self.show_products
         ).pack(anchor="w", pady=(20, 0))
 
+    # Fixed-choice dropdowns (EU tyre-label ratings). The add-able pickers
+    # (brand/model/product type/vehicle type) get their values from the database.
+    _RATING_AE = ["", "A", "B", "C", "D", "E"]          # rolling resistance, wet grip
+    _NOISE_CLASS = ["", "A", "B", "C"]                  # wave-bar noise class
+    _NOISE_DB = [""] + [str(n) for n in range(65, 81)]  # measured noise, dB
+
     def show_product_form(self):
-        """Create a new product (stock code is derived automatically)."""
+        """Create a new product. Stock code/size are derived from the description.
+
+        Two-column layout: identity/classification on the left, the EU tyre-label
+        ratings on the right. Description is forced upper-case; Brand / Model /
+        Product Type / Vehicle Type are dropdowns with a "+" to add a new option."""
         self.current_view = "product_form"
         self._clear_container()
         ttk.Label(
@@ -263,38 +274,91 @@ class ProductsMixin:
 
         form = ttk.LabelFrame(self.container, text="Product Details", padding=12)
         form.pack(anchor="w", fill="x")
-        fields = [
-            ("description", "Description"),
-            ("brand", "Brand"),
-            ("model", "Model"),
-            ("ean", "EAN"),
-            ("manufacturer_code", "Manufacturer Code"),
-            ("product_type", "Product Type"),
-            ("vehicle_type", "Vehicle Type"),
-            ("rolling_resistance", "Rolling Resistance"),
-            ("wet_grip", "Wet Grip"),
-            ("noise_class", "Noise Class"),
-            ("noise_performance", "Noise Performance"),
-            ("vehicle_class", "Vehicle Class"),
-            ("pricing_key", "Pricing Key"),
-            ("product_group", "Product Group"),
-        ]
-        entries = {}
-        for row, (key, label) in enumerate(fields):
-            ttk.Label(form, text=label + ":").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 10))
-            entry = ttk.Entry(form, width=40)
-            entry.grid(row=row, column=1, pady=4)
-            entries[key] = entry
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(3, weight=1)
 
-        ttk.Label(
-            self.container,
-            text="Stock Code is generated automatically from the size, brand and "
-            "manufacturer code. Pricing Key and Product Group are used by pricing rules.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(10, 0))
+        variables = {}
+
+        def field_options(category):
+            """Dropdown options for an add-able field: values already in the
+            catalogue, plus any the user has added, de-duplicated."""
+            values = set(product_db.get_distinct_values(category))
+            values |= set(lookups_db.get_values(category))
+            return [""] + sorted(values, key=str.lower)
+
+        def add_lookup(category, var, combo, label_text):
+            """"+" handler: prompt for a new option, persist it, then select it."""
+            new = messagebox.askstring(
+                f"New {label_text}", f"Enter a new {label_text.lower()}:")
+            if not new:
+                return
+            try:
+                lookups_db.add_value(category, new)
+            except lookups_db.DuplicateValueError:
+                pass  # already known — just select it
+            combo["values"] = field_options(category)
+            var.set(new)
+            self.mark_form_dirty()
+
+        def label(text, row, col):
+            pad = (30, 10) if col == 2 else (0, 10)
+            ttk.Label(form, text=text + ":").grid(
+                row=row, column=col, sticky="w", pady=5, padx=pad)
+
+        def entry(key, row, col, width=24):
+            var = variables[key] = tk.StringVar()
+            ttk.Entry(form, textvariable=var, width=width).grid(
+                row=row, column=col, sticky="w", pady=5)
+
+        def choice(key, row, col, values, width=22):
+            var = variables[key] = tk.StringVar()
+            ttk.Combobox(form, textvariable=var, state="readonly",
+                         values=values, width=width).grid(
+                row=row, column=col, sticky="w", pady=5)
+
+        def addable(key, label_text, row, col):
+            var = variables[key] = tk.StringVar()
+            cell = ttk.Frame(form)
+            cell.grid(row=row, column=col, sticky="w", pady=5)
+            combo = ttk.Combobox(cell, textvariable=var, state="readonly",
+                                 values=field_options(key), width=20)
+            combo.pack(side="left")
+            ttk.Button(cell, text="+", width=2,
+                       command=lambda: add_lookup(key, var, combo, label_text)
+                       ).pack(side="left", padx=(4, 0))
+
+        # Description spans both columns; forced upper-case as you type.
+        desc_var = variables["description"] = tk.StringVar()
+
+        def force_upper(*_):
+            current = desc_var.get()
+            upper = current.upper()
+            if current != upper:
+                desc_var.set(upper)
+        desc_var.trace_add("write", force_upper)
+        label("Description", 0, 0)
+        ttk.Entry(form, textvariable=desc_var).grid(
+            row=0, column=1, columnspan=3, sticky="ew", pady=5)
+
+        # Left column: identity & classification.
+        label("Brand", 1, 0);             addable("brand", "Brand", 1, 1)
+        label("Model", 2, 0);             addable("model", "Model", 2, 1)
+        label("Product Type", 3, 0);      addable("product_type", "Product Type", 3, 1)
+        label("Vehicle Type", 4, 0);      addable("vehicle_type", "Vehicle Type", 4, 1)
+        label("EAN", 5, 0);               entry("ean", 5, 1)
+        label("Manufacturer Code", 6, 0); entry("manufacturer_code", 6, 1)
+
+        # Right column: EU tyre-label ratings, then pricing classification.
+        label("Rolling Resistance", 1, 2); choice("rolling_resistance", 1, 3, self._RATING_AE)
+        label("Wet Grip", 2, 2);           choice("wet_grip", 2, 3, self._RATING_AE)
+        label("Noise Class", 3, 2);        choice("noise_class", 3, 3, self._NOISE_CLASS)
+        label("Noise Performance", 4, 2);  choice("noise_performance", 4, 3, self._NOISE_DB)
+        label("Vehicle Class", 5, 2);      entry("vehicle_class", 5, 3)
+        label("Pricing Key", 6, 2);        entry("pricing_key", 6, 3)
+        label("Product Group", 7, 2);      entry("product_group", 7, 3)
 
         def save():
-            data = {key: entry.get().strip() for key, entry in entries.items()}
+            data = {key: var.get().strip() for key, var in variables.items()}
             if not data["description"]:
                 messagebox.showwarning("Missing description", "Please enter a description.")
                 return None

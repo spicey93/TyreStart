@@ -176,6 +176,26 @@ def get_brands():
         return [row["brand"] for row in rows]
 
 
+# Columns the New Product form offers as add-able dropdowns; whitelisted so the
+# column name can be interpolated into get_distinct_values' SQL safely.
+DROPDOWN_COLUMNS = ("brand", "model", "product_type", "vehicle_type")
+
+
+def get_distinct_values(column):
+    """Return the distinct non-empty values held in `column`, sorted
+    case-insensitively. Used to seed the product-form dropdowns from data that's
+    already in the catalogue. `column` must be one of DROPDOWN_COLUMNS."""
+    if column not in DROPDOWN_COLUMNS:
+        raise ValueError(f"not a dropdown column: {column!r}")
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT {column} AS v FROM products "
+            f"WHERE {column} IS NOT NULL AND {column} <> '' "
+            f"ORDER BY {column} COLLATE NOCASE"
+        ).fetchall()
+        return [row["v"] for row in rows]
+
+
 def get_models(brand="", size_prefix=""):
     """Distinct non-empty models, optionally narrowed by brand and/or a stock-code
     size prefix (e.g. '2055516'). Keeps the model picker a manageable size."""

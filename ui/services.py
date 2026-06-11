@@ -109,12 +109,6 @@ class ServicesMixin:
         tree.bind("<Return>", lambda e: open_selected())
         tree.bind("<Delete>", delete_selected)
 
-        ttk.Label(
-            self.container,
-            text="Double-click or Enter for options (view / create sale) · Delete key to remove.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(4, 0))
-
         refresh()
 
     def show_service_form(self, service=None):

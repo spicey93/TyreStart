@@ -1,10 +1,10 @@
 ﻿"""Central place for the app's colors, fonts and ttk styling.
 
-The look is a *retro, high-contrast* yellow-on-black scheme (the classic
-accessible high-contrast pairing): a black page with bright yellow text, yellow
-(inverted) buttons and selection, white emphasis, in a monospace typeface. Per
-DESIGN.md, colors live here and nowhere else — screens ask for a named color/font
-from this module rather than hardcoding hex values.
+The look is a *retro green-phosphor CRT* scheme — the classic P1 monochrome
+monitor: a black page with glowing green text, green (inverted) buttons and
+selection, pale-green emphasis, in a monospace typeface. Per DESIGN.md, colors
+live here and nowhere else — screens ask for a named color/font from this module
+rather than hardcoding hex values.
 
 Call `apply(root)` once, right after the root window is created.
 """
@@ -12,21 +12,21 @@ from tkinter import ttk
 import tkinter.font as tkfont
 
 # --- Palette -----------------------------------------------------------------
-# Yellow-on-black: black page, bright yellow text, yellow accents. High contrast.
-BG = "#000000"          # black page
-BG_RAISED = "#1A1A1A"   # dark grey panels (label frames, headings, menubar)
-FG = "#FFD500"          # bright yellow — primary text
-FG_BRIGHT = "#FFFFFF"   # white — titles / emphasis
-FG_MUTED = "#C9A227"    # muted gold — hints, secondary text
-FIELD_BG = "#0D0D0D"    # input wells: near-black
-BORDER = "#555555"      # soft grey outline (so the white focus ring stands out)
-ACCENT = "#FFD500"      # bright yellow — buttons and selection (inverted)
-ACCENT_TEXT = "#000000" # black text drawn on yellow
-SELECT_BG = "#FFD500"   # selected row / active item: yellow bar
-SELECT_FG = "#000000"
-SELECT_DIM = "#6E5E00"  # selected row when its table is NOT focused (dim amber)
-FOCUS = "#FFFFFF"        # crisp white — outlines whatever widget has focus
-ROW_HOVER = "#3A3A00"   # row the mouse is over: faint amber wash
+# Green-on-black phosphor CRT: black page, glowing green text, green accents.
+BG = "#001100"          # near-black with a faint green CRT glow
+BG_RAISED = "#0A1F0A"   # dim green panels (label frames, headings, menubar)
+FG = "#33FF33"          # glowing phosphor green — primary text
+FG_BRIGHT = "#CCFFCC"   # pale green — titles / emphasis
+FG_MUTED = "#1F9F1F"    # dim green — hints, secondary text
+FIELD_BG = "#001A00"    # input wells: near-black green
+BORDER = "#2E6E2E"      # soft green outline (so the pale focus ring stands out)
+ACCENT = "#33FF33"      # phosphor green — buttons and selection (inverted)
+ACCENT_TEXT = "#001100" # dark text drawn on green
+SELECT_BG = "#33FF33"   # selected row / active item: green bar
+SELECT_FG = "#001100"
+SELECT_DIM = "#0E5A0E"  # selected row when its table is NOT focused (dim green)
+FOCUS = "#AFFFAF"        # pale green — outlines whatever widget has focus
+ROW_HOVER = "#0A2A0A"   # row the mouse is over: faint green wash
 
 # --- Fonts -------------------------------------------------------------------
 # "Consolas" ships on Windows; the family falls back gracefully elsewhere.
@@ -92,7 +92,7 @@ def apply(root):
                     relief="raised", borderwidth=2, padding=(10, 4),
                     font=(FONT_FAMILY, 11, "bold"))
     style.map("TButton",
-              background=[("pressed", "#CCAA00"), ("active", ACCENT), ("focus", ACCENT)],
+              background=[("pressed", "#22BB22"), ("active", ACCENT), ("focus", ACCENT)],
               foreground=[("pressed", ACCENT_TEXT), ("active", ACCENT_TEXT), ("focus", ACCENT_TEXT)],
               bordercolor=[("focus", FOCUS), ("active", ACCENT)],
               lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)],

@@ -93,11 +93,6 @@ class PricingMixin:
                 refresh()
 
         tree.bind("<Delete>", lambda e: delete_selected())
-        ttk.Label(
-            self.container,
-            text="Select a rule and press Delete to remove it.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(10, 0))
         refresh()
 
     def show_pricing_rule_form(self):

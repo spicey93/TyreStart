@@ -80,8 +80,7 @@ class PaymentsMixin:
         tree.bind("<Delete>", delete_selected)
         ttk.Label(
             self.container,
-            text=(f"{len(rows)} payment(s). Double-click to allocate · Delete key to remove."
-                  if rows else "No payments yet."),
+            text=(f"{len(rows)} payment(s)." if rows else "No payments yet."),
         ).pack(anchor="w", pady=(8, 0))
         ttk.Button(
             self.container, text="Back to Supplier",

@@ -102,12 +102,6 @@ class CustomersMixin:
         tree.bind("<Return>", lambda e: open_selected())
         tree.bind("<Delete>", delete_selected)
 
-        ttk.Label(
-            self.container,
-            text="Double-click or Enter to edit · Delete key to remove the selected customer.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(4, 0))
-
         refresh()
 
     def show_customer_form(self, customer=None):

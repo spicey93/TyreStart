@@ -102,3 +102,65 @@ def askyesno(title=None, message=None, parent=None, **_kw):
 def askyesnocancel(title=None, message=None, parent=None, **_kw):
     return _show("question", title, message, parent,
                  [("Yes", True), ("No", False), ("Cancel", None)], None)
+
+
+def askstring(title=None, prompt=None, parent=None, initialvalue="",
+              uppercase=False):
+    """Prompt for a single line of text in a themed modal. Returns the entered
+    string (stripped), or None if cancelled. With ``uppercase=True`` the entry
+    forces upper case as you type."""
+    parent = parent or tk._default_root
+    win = tk.Toplevel(parent)
+    win.title(title or "")
+    win.configure(background=theme.BG)
+    win.transient(parent)
+    win.resizable(False, False)
+
+    result = {"value": None}
+    var = tk.StringVar(value=initialvalue)
+    if uppercase:
+        def force_upper(*_):
+            current = var.get()
+            upper = current.upper()
+            if current != upper:
+                var.set(upper)
+        var.trace_add("write", force_upper)
+
+    body = ttk.Frame(win, padding=18)
+    body.pack(fill="both", expand=True)
+    if prompt:
+        ttk.Label(body, text=prompt, wraplength=380, justify="left").pack(
+            anchor="w", pady=(0, 8))
+    entry = ttk.Entry(body, textvariable=var, width=36)
+    entry.pack(fill="x")
+
+    def submit():
+        result["value"] = var.get().strip()
+        win.destroy()
+
+    def cancel():
+        result["value"] = None
+        win.destroy()
+
+    btn_bar = ttk.Frame(win, padding=(18, 0, 18, 18))
+    btn_bar.pack(fill="x")
+    inner = ttk.Frame(btn_bar)
+    inner.pack(side="right")
+    ok_btn = ttk.Button(inner, text="OK", command=submit)
+    ok_btn.pack(side="left", padx=(8, 0))
+    ttk.Button(inner, text="Cancel", command=cancel).pack(side="left", padx=(8, 0))
+
+    entry.bind("<Return>", lambda e: submit())
+    win.bind("<Escape>", lambda e: cancel())
+    win.protocol("WM_DELETE_WINDOW", cancel)
+
+    win.update_idletasks()
+    px, py = parent.winfo_rootx(), parent.winfo_rooty()
+    pw, ph = parent.winfo_width(), parent.winfo_height()
+    w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+    win.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 3}")
+
+    win.grab_set()
+    entry.focus_set()
+    parent.wait_window(win)
+    return result["value"]

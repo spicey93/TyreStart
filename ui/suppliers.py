@@ -137,12 +137,6 @@ class SuppliersMixin:
         tree.bind("<Return>", lambda e: edit_selected())
         tree.bind("<Delete>", delete_selected)
 
-        ttk.Label(
-            self.container,
-            text="Double-click or Enter to edit · Delete key to remove the selected supplier.",
-            foreground="#C9A227",
-        ).pack(anchor="w", pady=(6, 0))
-
         refresh_tree()
 
     def show_create_supplier(self):
@@ -354,8 +348,6 @@ class SuppliersMixin:
         tree.bind("<Double-1>", open_selected)
         tree.bind("<Return>", open_selected)
         tree.bind("<Delete>", delete_selected)
-        ttk.Label(tab, text="Double-click to allocate · Delete to remove.",
-                  style="Hint.TLabel").pack(anchor="w", pady=(4, 0))
         refresh()
 
     def _build_supplier_purchases_tab(self, notebook, supplier_id):
@@ -412,6 +404,4 @@ class SuppliersMixin:
 
         tree.bind("<Double-1>", open_selected)
         tree.bind("<Return>", open_selected)
-        ttk.Label(tab, text="Double-click or Enter to open a purchase.",
-                  style="Hint.TLabel").pack(anchor="w", pady=(4, 0))
         refresh()

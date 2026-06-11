@@ -10,10 +10,10 @@ add it here.
   Use classic `tk` only where `ttk` has no equivalent (e.g. `tk.Menu`, `tk.StringVar`).
 - **Font:** `("Consolas", ...)` — a monospace face for the retro terminal look. Page
   titles are `("Consolas", 20, "bold")`.
-- **Retro high-contrast theme.** The palette and all ttk styling live in `ui/theme.py`
-  (a black page, bright yellow text, yellow inverted chunky buttons — high contrast).
-  Whatever widget currently has keyboard focus is outlined in **crisp white**
-  (`theme.FOCUS`) against the soft-grey default border — entries, comboboxes, buttons
+- **Retro green-phosphor CRT theme.** The palette and all ttk styling live in `ui/theme.py`
+  (a black page, glowing green text, green inverted chunky buttons — a classic P1
+  monochrome monitor). Whatever widget currently has keyboard focus is outlined in **pale
+  green** (`theme.FOCUS`) against the soft-green default border — entries, comboboxes, buttons
   and tables alike — so it's always obvious where you are. `theme.apply(self)`
   runs once in `App.__init__`, before any view is built. **Never hardcode hex colors per
   widget** — pull a named color from `theme` (e.g. `theme.FG`, `theme.FG_MUTED`,
@@ -33,7 +33,8 @@ add it here.
   path and the shared `get_connection()`; `database.init_db()` creates all tables at
   startup.
 - **One data-access module per entity** (`suppliers.py`, `products.py`, `purchases.py`,
-  `payments.py`, `nominals.py`, `services.py`, `customers.py`, `sales.py`, `receipts.py`). Each imports `get_connection` from `database.py`,
+  `payments.py`, `nominals.py`, `services.py`, `customers.py`, `sales.py`, `receipts.py`,
+  `lookups.py`). Each imports `get_connection` from `database.py`,
   exposes a `create_table()`, and keeps **all of that entity's SQL**. The UI calls
   functions like `db.get_all_suppliers()` and never writes SQL inline. The data layer
   raises domain errors (e.g. `DuplicateNameError`) instead of leaking `sqlite3` errors.
@@ -234,6 +235,14 @@ For a record that owns a list of sub-rows (e.g. a Purchase with product lines):
 - **Dependent dropdowns**: narrow a large option list by its parents to keep it usable —
   e.g. the model picker is scoped to the chosen brand + size (`get_models(brand, size)`),
   refreshed when the brand changes or a search runs.
+- **Add-able dropdowns** (a readonly `Combobox` with a `+` button beside it): for fields
+  picked from a managed list the user can extend — Brand / Model / Product Type / Vehicle
+  Type on the New Product form. Options are the union of the distinct values already in the
+  entity table (`products.get_distinct_values(col)`) and user-added values persisted in the
+  `lookups` table (`core/lookups.py`, keyed by category). The `+` button calls
+  `dialogs.askstring`, persists via `lookups.add_value` (ignoring `DuplicateValueError`),
+  refreshes the combo's `values`, and selects the new option. The combo is `state="readonly"`
+  so the field can *only* be set from the list or the `+`.
 
 ## Search shorthands & filters
 - Products support a **size+speed stock-code shorthand**: `2055516V` = size 205/55R16
