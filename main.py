@@ -63,12 +63,12 @@ class App(
         # is open switches straight to it (no Escape needed).
         self.current_view = None
         self._section_popup = None
-        self.bind_all("<F2>", lambda e: self._open_section("suppliers"))
+        self.bind_all("<F2>", lambda e: self._open_section("sales"))
         self.bind_all("<F3>", lambda e: self._open_section("products"))
         self.bind_all("<F4>", lambda e: self._open_section("purchases"))
         self.bind_all("<F5>", lambda e: self._open_section("services"))
         self.bind_all("<F6>", lambda e: self._open_section("customers"))
-        self.bind_all("<F7>", lambda e: self._open_section("sales"))
+        self.bind_all("<F7>", lambda e: self._open_section("suppliers"))
 
         # Container that holds whichever view is currently shown.
         self.container = ttk.Frame(self, padding=20)
@@ -82,9 +82,8 @@ class App(
     # under the matching menubar button, so no per-section x-offset is needed.
     def _sections(self):
         return {
-            "suppliers": [("All Suppliers", self.show_all_suppliers),
-                          ("New Supplier", self.show_create_supplier),
-                          ("New Payment", self.show_new_payment)],
+            "sales": [("All Sales", self.show_sales),
+                      ("New Sale", self.show_sale_form)],
             "products": [("All Products", self.show_products),
                          ("New Product", self.show_product_form),
                          ("Pricing Rules", self.show_pricing_rules)],
@@ -97,8 +96,9 @@ class App(
             "customers": [("All Customers", self.show_customers),
                           ("New Customer", self.show_customer_form),
                           ("New Receipt", self.show_new_receipt)],
-            "sales": [("All Sales", self.show_sales),
-                      ("New Sale", self.show_sale_form)],
+            "suppliers": [("All Suppliers", self.show_all_suppliers),
+                          ("New Supplier", self.show_create_supplier),
+                          ("New Payment", self.show_new_payment)],
         }
 
     def _build_menu(self):
@@ -129,9 +129,9 @@ class App(
                 self._section_buttons[key] = item
 
         labels = {
-            "suppliers": "Suppliers [F2]", "products": "Products [F3]",
+            "sales": "Sales [F2]", "products": "Products [F3]",
             "purchases": "Purchases [F4]", "services": "Services [F5]",
-            "customers": "Customers [F6]", "sales": "Sales [F7]",
+            "customers": "Customers [F6]", "suppliers": "Suppliers [F7]",
         }
         for key, label in labels.items():
             add_item(label, lambda k=key: self._open_section(k), key=key)
