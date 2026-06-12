@@ -11,7 +11,7 @@ from core import dbmaint
 from core.database import get_connection
 
 # Bump as migrations are added below.
-LATEST = 2
+LATEST = 3
 
 # Tables whose presence of rows means "this is a real database worth backing up".
 _DATA_TABLES = ("sale_items", "purchase_items", "payments", "receipts")
@@ -47,3 +47,8 @@ def run_pending():
         from core import migrate_dates
         migrate_dates.run()
         dbmaint.set_schema_version(2)
+
+    if current < 3:
+        from core import migrate_accounts
+        migrate_accounts.run()
+        dbmaint.set_schema_version(3)
