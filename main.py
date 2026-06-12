@@ -85,9 +85,8 @@ class App(
         self.container = ttk.Frame(self, padding=20)
         self.container.pack(fill="both", expand=True)
 
-        # The Home page is retired for now (a dashboard will return here later);
-        # the app opens on the product catalogue.
-        self.show_products()
+        # The app opens on the Enquiry page (the point-of-sale lookup).
+        self.show_enquiry()
 
     # Section key -> [(item label, command), ...]. The dropdown aligns itself
     # under the matching menubar button, so no per-section x-offset is needed.
