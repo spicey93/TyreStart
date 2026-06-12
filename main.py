@@ -31,10 +31,12 @@ from ui.receipts import ReceiptsMixin
 from ui.accounts import ChartOfAccountsMixin
 from ui.reports import ReportsMixin
 from ui.enquiry import EnquiryMixin
+from ui.vehicles import VehiclesMixin
+from ui.config import ConfigMixin
 
 
 class App(
-    SuppliersMixin, ProductsMixin, PricingMixin, PurchasesMixin, AllocationMixin, PaymentsMixin, ServicesMixin, CustomersMixin, SalesMixin, ReceiptsMixin, ChartOfAccountsMixin, ReportsMixin, EnquiryMixin, tk.Tk,
+    SuppliersMixin, ProductsMixin, PricingMixin, PurchasesMixin, AllocationMixin, PaymentsMixin, ServicesMixin, CustomersMixin, SalesMixin, ReceiptsMixin, ChartOfAccountsMixin, ReportsMixin, EnquiryMixin, VehiclesMixin, ConfigMixin, tk.Tk,
 ):
     """Main application window with a menu bar and swappable content views."""
 
@@ -78,8 +80,10 @@ class App(
         self.bind_all("<F3>", lambda e: self._open_section("products"))
         self.bind_all("<F4>", lambda e: self._open_section("customers"))
         self.bind_all("<F5>", lambda e: self._open_section("suppliers"))
-        self.bind_all("<F6>", lambda e: self._open_section("accounts"))
-        self.bind_all("<F7>", lambda e: self._open_section("reports"))
+        self.bind_all("<F6>", lambda e: self._open_section("vehicles"))
+        self.bind_all("<F7>", lambda e: self._open_section("accounts"))
+        self.bind_all("<F8>", lambda e: self._open_section("reports"))
+        self.bind_all("<F9>", lambda e: self._open_section("config"))
 
         # Container that holds whichever view is currently shown.
         self.container = ttk.Frame(self, padding=20)
@@ -87,6 +91,9 @@ class App(
 
         # The app opens on the Enquiry page (the point-of-sale lookup).
         self.show_enquiry()
+
+    # Sections that open straight to their single screen instead of a dropdown.
+    _DIRECT_SECTIONS = ("enquiry", "vehicles")
 
     # Section key -> [(item label, command), ...]. The dropdown aligns itself
     # under the matching menubar button, so no per-section x-offset is needed.
@@ -111,12 +118,14 @@ class App(
                           ("New Purchase Order", self.show_purchase_order_form),
                           ("New Purchase Invoice", self.show_purchase_invoice_form),
                           ("New Credit Note", self.show_credit_note_form)],
+            "vehicles": [("Vehicles", self.show_vehicles)],
             "accounts": [("Chart of Accounts", self.show_chart_of_accounts),
                          ("New Account", self.show_account_form)],
             "reports": [("Trial Balance", self.show_trial_balance),
                         ("Profit & Loss", self.show_profit_and_loss),
                         ("Balance Sheet", self.show_balance_sheet),
                         ("VAT Return", self.show_vat_return)],
+            "config": [("API Keys", self.show_api_keys)],
         }
 
     def _build_menu(self):
@@ -149,8 +158,9 @@ class App(
         labels = {
             "enquiry": "Enquiry [F1]", "sales": "Sales [F2]",
             "products": "Products & Services [F3]", "customers": "Customers [F4]",
-            "suppliers": "Suppliers [F5]", "accounts": "Accounts [F6]",
-            "reports": "Reports [F7]",
+            "suppliers": "Suppliers [F5]", "vehicles": "Vehicles [F6]",
+            "accounts": "Accounts [F7]", "reports": "Reports [F8]",
+            "config": "Configuration [F9]",
         }
         for key, label in labels.items():
             add_item(label, lambda k=key: self._open_section(k), key=key)
@@ -164,9 +174,10 @@ class App(
         with no Escape needed.
         """
         items = self._sections()[key]
-        # A single-item section (e.g. Enquiry) acts as a direct action — no point
-        # showing a one-row dropdown.
-        if len(items) == 1:
+        # Some sections (Enquiry, Vehicles) are a single screen — open them
+        # directly rather than showing a one-row dropdown. Others (e.g. Config)
+        # keep their dropdown even with one item, so more can be added later.
+        if key in self._DIRECT_SECTIONS:
             self._close_section()
             self._go(items[0][1])
             return

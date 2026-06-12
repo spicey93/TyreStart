@@ -66,11 +66,16 @@ core/              Data access and domain logic (no UI dependencies).
   reports.py         Trial balance, profit & loss, balance sheet.
   dbmaint.py migrations.py migrate_money.py migrate_dates.py   Backups + migrations.
   pricing.py         Pricing-rule formulas and rule selection.
+  vehicles.py ukvehicledata.py   VRM lookup (DB-first, then UK Vehicle Data API).
+  settings.py        Key/value app settings (e.g. API keys).
   suppliers.py products.py purchases.py payments.py
   nominals.py services.py customers.py sales.py receipts.py
 ui/                Tkinter screens, one module per entity.
   common.py          Shared widgets (autocomplete combobox, sortable tables).
-  reports.py accounts.py   Reports [F9] and Chart of Accounts [F8] screens.
+  enquiry.py         Enquiry [F1] point-of-sale lookup (code → start a sale).
+  vehicles.py        Vehicles [F6] VRM lookup screen.
+  config.py          Configuration [F9] → API Keys.
+  reports.py accounts.py   Reports and Chart of Accounts screens.
   <entity>.py        Screen mixins added to App (suppliers, products, …).
 tests/             Unit tests (standard-library unittest).
 DESIGN.md          UI design/style guide for new screens.

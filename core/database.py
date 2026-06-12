@@ -40,6 +40,8 @@ def init_db():
     from core import lookups
     from core import taxcodes
     from core import vat
+    from core import settings
+    from core import vehicles
 
     dbmaint.create_table()
     suppliers.create_table()
@@ -57,6 +59,8 @@ def init_db():
     lookups.create_table()
     taxcodes.create_table()
     vat.create_table()
+    settings.create_table()
+    vehicles.create_table()
 
     # Run any pending data migrations now that every table/column exists.
     from core import migrations
