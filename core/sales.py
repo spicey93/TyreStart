@@ -12,7 +12,7 @@ promoted (Quote → Order → Invoice) it keeps the numbers it earned at each st
 
 import datetime
 
-from core import daterange, money
+from core import daterange, money, posting
 from core.database import get_connection
 
 STATUSES = ("Quote", "Order", "Invoice")
@@ -155,6 +155,7 @@ def create_sale(customer_id, status, date, items):
         sale_id = cursor.lastrowid
         _assign_number(conn, sale_id, status)
         _insert_items(conn, sale_id, items)
+        posting.post_sale(conn, sale_id)
         return sale_id
 
 
@@ -171,11 +172,14 @@ def update_sale(sale_id, customer_id, status, date, items):
         _assign_number(conn, sale_id, status)
         conn.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
         _insert_items(conn, sale_id, items)
+        posting.post_sale(conn, sale_id)
 
 
 def delete_sale(sale_id):
-    """Delete a sale (its line items cascade)."""
+    """Delete a sale (its line items cascade). Any ledger journal is reversed
+    first, leaving the reversal as an audit trail."""
     with get_connection() as conn:
+        posting.remove(conn, "sale", sale_id)
         conn.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
 
 

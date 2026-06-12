@@ -7,7 +7,7 @@ supplier's invoices (payment.amount = sum of its allocations). Stored in app.db.
 
 import datetime
 
-from core import daterange, money
+from core import daterange, money, posting
 from core.database import get_connection
 
 METHODS = ("Cash", "Card", "BACS")
@@ -89,6 +89,7 @@ def create_payment(supplier_id, nominal_account_id, method, date, amount, alloca
                 [(payment_id, a["purchase_id"], money.from_pence(money.to_pence(a["amount"])),
                   money.to_pence(a["amount"])) for a in allocations],
             )
+        posting.post_payment(conn, payment_id)
         return payment_id
 
 
@@ -110,8 +111,10 @@ def add_allocations(payment_id, allocations):
 
 
 def delete_payment(payment_id):
-    """Delete a payment and (via ON DELETE CASCADE) its allocations."""
+    """Delete a payment and (via ON DELETE CASCADE) its allocations. Any ledger
+    journal is reversed first, leaving the reversal as an audit trail."""
     with get_connection() as conn:
+        posting.remove(conn, "payment", payment_id)
         conn.execute("DELETE FROM payments WHERE id = ?", (payment_id,))
 
 

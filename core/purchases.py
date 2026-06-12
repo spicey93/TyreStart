@@ -9,7 +9,7 @@ until received. Stored in the central app.db alongside the other entities.
 
 import datetime
 
-from core import daterange, money
+from core import daterange, money, posting
 from core.database import get_connection
 
 STATUSES = ("Order", "Invoice", "Credit Note")
@@ -182,6 +182,7 @@ def create_purchase(supplier_id, status, reference, date, items, reconciled=0,
         )
         purchase_id = cursor.lastrowid
         _insert_items(conn, purchase_id, items)
+        posting.post_purchase(conn, purchase_id)
         return purchase_id
 
 
@@ -200,11 +201,14 @@ def update_purchase(purchase_id, supplier_id, status, reference, date, items,
         )
         conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
         _insert_items(conn, purchase_id, items)
+        posting.post_purchase(conn, purchase_id)
 
 
 def delete_purchase(purchase_id):
-    """Delete a purchase (its line items cascade)."""
+    """Delete a purchase (its line items cascade). Any ledger journal is reversed
+    first, leaving the reversal as an audit trail."""
     with get_connection() as conn:
+        posting.remove(conn, "purchase", purchase_id)
         conn.execute("DELETE FROM purchases WHERE id = ?", (purchase_id,))
 
 

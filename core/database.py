@@ -29,6 +29,7 @@ def init_db():
     from core import products
     from core import nominals
     from core import accounts
+    from core import journal
     from core import purchases
     from core import payments
     from core import services
@@ -43,6 +44,7 @@ def init_db():
     products.create_table()
     nominals.create_table()
     accounts.create_table()
+    journal.create_table()
     purchases.create_table()
     payments.create_table()
     services.create_table()
