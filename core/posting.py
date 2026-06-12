@@ -15,7 +15,17 @@ Tax points (when a journal is raised):
 All amounts are whole pence and tie to core.money / the *_pence columns.
 """
 
-from core import accounts, journal, money
+from core import accounts, daterange, journal, money
+
+
+def _redirect_for(conn, source_type, source_id):
+    """Date to use when a document's existing journals are locked (filed): today,
+    so the reversal and re-post land in the open period instead of rewriting a
+    filed one. Returns None when nothing is locked (use the document's own date).
+    """
+    if journal.has_locked_live(conn, source_type, source_id):
+        return daterange.iso_today()
+    return None
 
 
 def _avg_cost_pence(conn, product_id):
@@ -31,7 +41,15 @@ def _avg_cost_pence(conn, product_id):
 
 
 def remove(conn, source_type, source_id):
-    """Reverse all of a document's live journals (used on delete)."""
+    """Reverse all of a document's live journals (used on delete).
+
+    Refuses if the document is in a filed (locked) VAT period — a credit note
+    should be raised instead of deleting history.
+    """
+    if journal.has_locked_live(conn, source_type, source_id):
+        raise journal.LockedPeriodError(
+            "This document is in a filed VAT period and cannot be deleted; "
+            "raise a credit note instead.")
     journal.reverse_live(conn, source_type, source_id)
 
 
@@ -42,7 +60,8 @@ def post_sale(conn, sale_id):
     CR Output VAT (vat). Plus, per product line, DR COGS / CR Stock at average
     cost. The whole thing is one balanced journal.
     """
-    journal.reverse_live(conn, "sale", sale_id)
+    redirect = _redirect_for(conn, "sale", sale_id)
+    journal.reverse_live(conn, "sale", sale_id, redirect_date=redirect)
     sale = conn.execute(
         "SELECT status, date FROM sales WHERE id = ?", (sale_id,)).fetchone()
     if not sale or sale["status"] != "Invoice":
@@ -71,7 +90,7 @@ def post_sale(conn, sale_id):
         {"account_id": accounts.system_id("cogs"), "debit": cogs_total},
         {"account_id": accounts.system_id("stock"), "credit": cogs_total},
     ]
-    journal.post(conn, sale["date"], "sale", sale_id, lines, memo="Sales invoice")
+    journal.post(conn, redirect or sale["date"], "sale", sale_id, lines, memo="Sales invoice")
 
 
 def post_purchase(conn, purchase_id):
@@ -80,7 +99,8 @@ def post_purchase(conn, purchase_id):
     Invoice: DR Stock (net), DR Input VAT (vat), CR Creditors (gross).
     Credit Note: the reverse (DR Creditors, CR Stock, CR Input VAT).
     """
-    journal.reverse_live(conn, "purchase", purchase_id)
+    redirect = _redirect_for(conn, "purchase", purchase_id)
+    journal.reverse_live(conn, "purchase", purchase_id, redirect_date=redirect)
     pu = conn.execute(
         "SELECT status, date FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
     if not pu or pu["status"] not in ("Invoice", "Credit Note"):
@@ -113,12 +133,13 @@ def post_purchase(conn, purchase_id):
             {"account_id": vat_input, "credit": vat},
         ]
         memo = "Purchase credit note"
-    journal.post(conn, pu["date"], "purchase", purchase_id, lines, memo=memo)
+    journal.post(conn, redirect or pu["date"], "purchase", purchase_id, lines, memo=memo)
 
 
 def post_receipt(conn, receipt_id):
     """(Re)post the journal for a customer receipt: DR Bank/Cash, CR Debtors."""
-    journal.reverse_live(conn, "receipt", receipt_id)
+    redirect = _redirect_for(conn, "receipt", receipt_id)
+    journal.reverse_live(conn, "receipt", receipt_id, redirect_date=redirect)
     r = conn.execute(
         "SELECT amount_pence, date, nominal_account_id FROM receipts WHERE id = ?",
         (receipt_id,)).fetchone()
@@ -129,12 +150,13 @@ def post_receipt(conn, receipt_id):
         {"account_id": bank, "debit": r["amount_pence"]},
         {"account_id": accounts.system_id("debtors"), "credit": r["amount_pence"]},
     ]
-    journal.post(conn, r["date"], "receipt", receipt_id, lines, memo="Customer receipt")
+    journal.post(conn, redirect or r["date"], "receipt", receipt_id, lines, memo="Customer receipt")
 
 
 def post_payment(conn, payment_id):
     """(Re)post the journal for a supplier payment: DR Creditors, CR Bank/Cash."""
-    journal.reverse_live(conn, "payment", payment_id)
+    redirect = _redirect_for(conn, "payment", payment_id)
+    journal.reverse_live(conn, "payment", payment_id, redirect_date=redirect)
     p = conn.execute(
         "SELECT amount_pence, date, nominal_account_id FROM payments WHERE id = ?",
         (payment_id,)).fetchone()
@@ -145,4 +167,4 @@ def post_payment(conn, payment_id):
         {"account_id": accounts.system_id("creditors"), "debit": p["amount_pence"]},
         {"account_id": bank, "credit": p["amount_pence"]},
     ]
-    journal.post(conn, p["date"], "payment", payment_id, lines, memo="Supplier payment")
+    journal.post(conn, redirect or p["date"], "payment", payment_id, lines, memo="Supplier payment")

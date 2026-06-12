@@ -18,6 +18,10 @@ class UnbalancedJournalError(Exception):
     """Raised when a journal's debits and credits do not match."""
 
 
+class LockedPeriodError(Exception):
+    """Raised when an operation would rewrite a journal in a filed (locked) period."""
+
+
 def _now():
     return datetime.datetime.now().isoformat(timespec="seconds")
 
@@ -101,6 +105,14 @@ def live_journal_ids(conn, source_type, source_id):
         "AND NOT EXISTS (SELECT 1 FROM journal r WHERE r.reversal_of = j.id)",
         (source_type, source_id),
     )]
+
+
+def has_locked_live(conn, source_type, source_id):
+    """True if any of a document's live journals is in a locked (filed) period."""
+    for jid in live_journal_ids(conn, source_type, source_id):
+        if conn.execute("SELECT locked FROM journal WHERE id = ?", (jid,)).fetchone()["locked"]:
+            return True
+    return False
 
 
 def reverse_live(conn, source_type, source_id, redirect_date=None):
