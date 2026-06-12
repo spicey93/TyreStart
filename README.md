@@ -64,6 +64,7 @@ core/              Data access and domain logic (no UI dependencies).
   posting.py         Posts a balanced journal from each source document.
   vat.py taxcodes.py VAT return (9 boxes) + named tax codes.
   reports.py         Trial balance, profit & loss, balance sheet.
+  opening.py         Opening balances (posted as a balanced 'opening' journal).
   dbmaint.py migrations.py migrate_money.py migrate_dates.py   Backups + migrations.
   pricing.py         Pricing-rule formulas and rule selection.
   vehicles.py ukvehicledata.py   VRM lookup (DB-first, then UK Vehicle Data API).

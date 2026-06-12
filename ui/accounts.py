@@ -1,9 +1,12 @@
 """Chart of accounts screens (mixin for App)."""
+import datetime
 import tkinter as tk
 from tkinter import ttk
 from ui import dialogs as messagebox
 
 from core import accounts as account_db
+from core import opening as opening_db
+from core import money, daterange
 
 from ui.common import make_sortable
 
@@ -107,5 +110,93 @@ class ChartOfAccountsMixin:
                 messagebox.showerror("Duplicate code",
                                      f"An account with code '{code}' already exists.")
                 return None
+
+        self._register_form(save=save, back=self.show_chart_of_accounts)
+
+    # ----------------------------------------------------------- Opening balances
+    def show_opening_balances(self):
+        """Enter the business's starting position. The user fills in what they have
+        (assets) and owe (liabilities); the difference is posted to Capital
+        Introduced so it always balances. Saved when leaving the page."""
+        self.current_view = "opening_balances"
+        self._clear_container()
+        body = self._scrollable_body()
+
+        ttk.Label(body, text="Opening Balances",
+                  font=("Consolas", 20, "bold")).pack(anchor="w", pady=(0, 12))
+
+        existing = opening_db.get_opening()
+
+        head = ttk.Frame(body)
+        head.pack(anchor="w", fill="x")
+        ttk.Label(head, text="As-at date:").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        date_var = tk.StringVar(
+            value=daterange.format_stored(existing["date"]) if existing["date"]
+            else datetime.date.today().strftime("%d/%m/%y"))
+        ttk.Entry(head, textvariable=date_var, width=14).grid(row=0, column=1, sticky="w")
+        ttk.Label(body, font=("Consolas", 9),
+                  text="The date your figures are as at (usually when you start using the "
+                       "system). Enter what you have and what you owe — the difference is "
+                       "your capital.").pack(anchor="w", pady=(6, 10))
+
+        accounts = opening_db.editable_accounts()
+        amount_vars = {}
+        cap_var = tk.StringVar()
+
+        def recompute(*_):
+            net = 0
+            for acc in accounts:
+                raw = amount_vars[acc["id"]].get().strip()
+                try:
+                    pence = money.to_pence(raw) if raw else 0
+                except Exception:
+                    pence = 0
+                net += pence if acc["normal_side"] == "debit" else -pence
+            cap_var.set(f"Capital Introduced (balancing figure): {money.format_pence(net)}")
+
+        titles = (("asset", "ASSETS — what the business has"),
+                  ("liability", "LIABILITIES — what the business owes"),
+                  ("equity", "EQUITY (other than capital)"))
+        for account_type, title in titles:
+            rows = [a for a in accounts if a["account_type"] == account_type]
+            if not rows:
+                continue
+            frame = ttk.LabelFrame(body, text=title, padding=12)
+            frame.pack(anchor="w", fill="x", pady=(0, 10))
+            for i, acc in enumerate(rows):
+                ttk.Label(frame, text=f"{acc['code']} - {acc['name']}").grid(
+                    row=i, column=0, sticky="w", pady=3, padx=(0, 14))
+                var = tk.StringVar()
+                pence = existing["balances"].get(acc["id"], 0)
+                if pence:
+                    var.set(f"{money.from_pence(pence):.2f}")
+                amount_vars[acc["id"]] = var
+                entry = ttk.Entry(frame, textvariable=var, width=14, justify="right")
+                entry.grid(row=i, column=1, sticky="w", pady=3)
+                entry.bind("<KeyRelease>", recompute)
+
+        cap_frame = ttk.LabelFrame(body, text="Capital", padding=12)
+        cap_frame.pack(anchor="w", fill="x")
+        ttk.Label(cap_frame, textvariable=cap_var,
+                  font=("Consolas", 12, "bold")).pack(anchor="w")
+        recompute()
+
+        def save():
+            date_text = date_var.get().strip()
+            if not daterange.parse(date_text):
+                messagebox.showwarning("Date", "Enter a valid as-at date (DD/MM/YY).")
+                return None
+            amounts = {}
+            for acc in accounts:
+                raw = amount_vars[acc["id"]].get().strip()
+                if not raw:
+                    continue
+                try:
+                    amounts[acc["id"]] = money.to_pence(raw)
+                except Exception:
+                    messagebox.showwarning("Amount", f"'{raw}' is not a valid amount.")
+                    return None
+            opening_db.set_opening_balances(date_text, amounts)
+            return True
 
         self._register_form(save=save, back=self.show_chart_of_accounts)
