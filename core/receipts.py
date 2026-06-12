@@ -7,7 +7,7 @@ is allocated to one or more of the customer's sales. Stored in app.db.
 
 import datetime
 
-from core import money
+from core import daterange, money
 from core.database import get_connection
 
 METHODS = ("Cash", "Card", "BACS")
@@ -71,6 +71,7 @@ def create_receipt(customer_id, nominal_account_id, method, date, allocations):
     """
     total_pence = sum(money.to_pence(a["amount"]) for a in allocations)
     amount = money.from_pence(total_pence)
+    date = daterange.to_iso(date)
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO receipts "

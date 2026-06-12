@@ -8,6 +8,7 @@ from core import suppliers as db
 from core import purchases as purchase_db
 from core import products as product_db
 from core import money
+from core import daterange
 
 from ui.common import AutocompleteCombobox, make_sortable
 
@@ -78,7 +79,7 @@ class PurchasesMixin:
                     "", "end", iid=str(r["id"]),
                     values=(
                         r["reference"] or "", r["supplier_name"], r["status"],
-                        r["date"] or "", f"{r['total']:,.2f}",
+                        daterange.format_stored(r["date"]), f"{r['total']:,.2f}",
                     ),
                 )
             status_label.config(
@@ -348,7 +349,7 @@ class PurchasesMixin:
 
         if editing:
             supplier_var.set(purchase["supplier_name"])
-            date_var.set(purchase["date"] or "")
+            date_var.set(daterange.format_stored(purchase["date"]))
             self._prefill_lines(editor, purchase["id"])
 
     def _receive_purchase_order(self, po_id):
@@ -633,7 +634,7 @@ class PurchasesMixin:
             supplier_var.set(purchase["supplier_name"])
             credit_ref_var.set(purchase["credit_reference"] or "")
             return_ref_var.set(purchase["return_reference"] or "")
-            date_var.set(purchase["date"] or "")
+            date_var.set(daterange.format_stored(purchase["date"]))
             # Look up the credited invoice's quantities for the Invoiced column.
             invoiced_by_product = {}
             if linked_ref:
@@ -739,7 +740,7 @@ class PurchasesMixin:
             supplier_var.set(purchase["supplier_name"])
             number_var.set(purchase["reference"] or "")
             link_var.set(purchase["po_reference"] or "")
-            date_var.set(purchase["date"] or "")
+            date_var.set(daterange.format_stored(purchase["date"]))
             self._prefill_lines(editor, purchase["id"])
             # Raised from a PO (blank number): the document number is what's needed.
             if not purchase["reference"]:

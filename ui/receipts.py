@@ -8,6 +8,7 @@ from core import nominals
 from core import customers as customer_db
 from core import sales as sale_db
 from core import receipts as receipt_db
+from core import daterange
 
 from ui.common import make_sortable
 
@@ -52,7 +53,7 @@ class ReceiptsMixin:
             tree.insert(
                 "", "end",
                 values=(
-                    r["date"] or "", f"{r['account_code']} - {r['account_name']}",
+                    daterange.format_stored(r["date"]), f"{r['account_code']} - {r['account_name']}",
                     r["method"] or "", f"{r['amount']:,.2f}", r["sales"] or "",
                 ),
             )
@@ -167,7 +168,7 @@ class ReceiptsMixin:
             for i, s in enumerate(sales_list, start=1):
                 state["outstanding"][s["id"]] = s["outstanding"]
                 ttk.Label(alloc_frame, text=s["reference"] or "").grid(row=i, column=0, sticky="w", padx=(0, 12))
-                ttk.Label(alloc_frame, text=s["date"] or "").grid(row=i, column=1, sticky="w", padx=(0, 12))
+                ttk.Label(alloc_frame, text=daterange.format_stored(s["date"])).grid(row=i, column=1, sticky="w", padx=(0, 12))
                 ttk.Label(alloc_frame, text=f"{s['total']:,.2f}").grid(row=i, column=2, sticky="e", padx=(0, 12))
                 ttk.Label(alloc_frame, text=f"{s['outstanding']:,.2f}").grid(row=i, column=3, sticky="e", padx=(0, 12))
                 var = tk.StringVar()

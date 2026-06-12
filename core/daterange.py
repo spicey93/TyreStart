@@ -1,9 +1,11 @@
-"""Date-period presets and DD/MM/YY parsing for list filters.
+"""Date-period presets and date parsing/formatting for list filters and storage.
 
-Dates across the app are stored as ``DD/MM/YY`` text (see DESIGN.md). This module
-turns a named period (Today, This week, …) into an inclusive ``(start, end)`` pair
-of ``datetime.date`` objects and parses the stored text back into dates, so list
-views can filter by a quick preset or an explicit start/end range.
+Dates are **stored as ISO ``YYYY-MM-DD``** so SQL range/sort is chronological
+(``to_iso`` normalises on write; ``migrate_dates`` converts existing rows), but
+are **displayed as ``DD/MM/YY``** (see DESIGN.md) via ``format``/``format_stored``.
+``parse`` accepts both forms so a database mid-migration (or any stray legacy row)
+still reads correctly. This module also turns a named period (Today, This week, …)
+into an inclusive ``(start, end)`` pair of ``datetime.date`` objects.
 """
 import datetime
 
@@ -15,11 +17,15 @@ PERIODS = (
 
 
 def parse(text):
-    """Parse a ``DD/MM/YY`` (or ``DD/MM/YYYY``) string to a date, or None."""
+    """Parse a stored date string to a date, or None.
+
+    Accepts ISO ``YYYY-MM-DD`` (the current stored form) and the legacy
+    ``DD/MM/YY`` / ``DD/MM/YYYY`` so a part-migrated database still reads.
+    """
     if not text:
         return None
     text = text.strip()
-    for fmt in ("%d/%m/%y", "%d/%m/%Y"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%y", "%d/%m/%Y"):
         try:
             return datetime.datetime.strptime(text, fmt).date()
         except ValueError:
@@ -28,8 +34,56 @@ def parse(text):
 
 
 def format(value):
-    """Format a date as ``DD/MM/YY`` (the app's stored form)."""
+    """Format a date as ``DD/MM/YY`` (the app's display form)."""
     return value.strftime("%d/%m/%y") if value else ""
+
+
+def format_stored(text):
+    """Format a stored date string (ISO or legacy) as ``DD/MM/YY`` for display.
+
+    Unparseable text is returned unchanged so nothing unexpected is hidden.
+    """
+    parsed = parse(text)
+    return parsed.strftime("%d/%m/%y") if parsed else (text or "")
+
+
+def to_iso(value):
+    """Normalise a date or date string to ISO ``YYYY-MM-DD`` for storage.
+
+    Accepts a ``datetime.date``, an ISO string, or a legacy ``DD/MM/YY(YY)``
+    string. An empty/None value passes through; an unparseable string is returned
+    unchanged (so a bad value is never silently turned into a wrong date).
+    """
+    if value is None or value == "":
+        return value
+    if isinstance(value, datetime.date):
+        return value.strftime("%Y-%m-%d")
+    parsed = parse(value)
+    return parsed.strftime("%Y-%m-%d") if parsed else value
+
+
+def iso_today(today=None):
+    """Today's date as an ISO ``YYYY-MM-DD`` string."""
+    return (today or datetime.date.today()).strftime("%Y-%m-%d")
+
+
+def in_range_sql(start, end, column="date"):
+    """Return an ``(sql_clause, params)`` filtering an ISO date column to [start, end].
+
+    ``start``/``end`` are ``datetime.date`` objects or None (open bound). Safe for
+    SQL because ISO text compares chronologically. Use as::
+
+        clause, params = daterange.in_range_sql(s, e, "jr.date")
+        conn.execute(f"... WHERE {clause}", (*other, *params))
+    """
+    clauses, params = [], []
+    if start is not None:
+        clauses.append(f"{column} >= ?")
+        params.append(start.strftime("%Y-%m-%d"))
+    if end is not None:
+        clauses.append(f"{column} <= ?")
+        params.append(end.strftime("%Y-%m-%d"))
+    return (" AND ".join(clauses) if clauses else "1=1"), params
 
 
 def period_range(period, today=None):

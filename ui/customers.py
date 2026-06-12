@@ -6,6 +6,7 @@ from ui import dialogs as messagebox
 from core import customers as customer_db
 from core import receipts as receipt_db
 from core import sales as sale_db
+from core import daterange
 
 from ui.common import make_sortable
 
@@ -192,7 +193,7 @@ class CustomersMixin:
 
         def cells(r):
             return {
-                "date": r["date"] or "",
+                "date": daterange.format_stored(r["date"]),
                 "account": f"{r['account_code']} - {r['account_name']}",
                 "method": r["method"] or "",
                 "amount": f"{r['amount']:,.2f}",
@@ -221,7 +222,7 @@ class CustomersMixin:
             return {
                 "reference": r["reference"] or "",
                 "status": r["status"],
-                "date": r["date"] or "",
+                "date": daterange.format_stored(r["date"]),
                 "total": f"{r['total']:,.2f}",
             }
 

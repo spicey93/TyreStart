@@ -321,7 +321,7 @@ class SuppliersMixin:
                     continue
                 tree.insert(
                     "", "end", iid=str(r["id"]),
-                    values=(r["date"] or "", f"{r['account_code']} - {r['account_name']}",
+                    values=(daterange.format_stored(r["date"]), f"{r['account_code']} - {r['account_name']}",
                             r["method"] or "", f"{r['amount']:,.2f}",
                             f"{r['unallocated']:,.2f}", r["invoices"] or ""))
                 shown += 1
@@ -339,7 +339,7 @@ class SuppliersMixin:
                 return
             pid = int(sel[0])
             row = next((r for r in rows if r["id"] == pid), None)
-            label = f"{row['date'] or ''} · {row['amount']:,.2f}" if row else str(pid)
+            label = f"{daterange.format_stored(row['date'])} · {row['amount']:,.2f}" if row else str(pid)
             if messagebox.askyesno("Delete payment", f"Delete payment ({label})?"):
                 payment_db.delete_payment(pid)
                 self._form_dirty = False
@@ -390,7 +390,7 @@ class SuppliersMixin:
                     continue
                 tree.insert(
                     "", "end", iid=str(r["id"]),
-                    values=(r["reference"] or "", r["status"], r["date"] or "",
+                    values=(r["reference"] or "", r["status"], daterange.format_stored(r["date"]),
                             f"{r['total']:,.2f}", "Yes" if paid else "No",
                             "Yes" if reconciled else "No"))
                 shown += 1

@@ -9,7 +9,7 @@ until received. Stored in the central app.db alongside the other entities.
 
 import datetime
 
-from core import money
+from core import daterange, money
 from core.database import get_connection
 
 STATUSES = ("Order", "Invoice", "Credit Note")
@@ -168,6 +168,7 @@ def create_purchase(supplier_id, status, reference, date, items, reconciled=0,
     (PO… / CN…); Invoices keep the manually entered reference. `po_reference` links
     an invoice to its PO number, or a credit note to the invoice number it credits.
     """
+    date = daterange.to_iso(date)
     with get_connection() as conn:
         if not reference:
             reference = next_reference(status, conn)
@@ -188,6 +189,7 @@ def update_purchase(purchase_id, supplier_id, status, reference, date, items,
                     reconciled=0, po_reference="", credit_reference="",
                     return_reference=""):
     """Update a purchase, replacing all of its line items."""
+    date = daterange.to_iso(date)
     with get_connection() as conn:
         conn.execute(
             "UPDATE purchases SET supplier_id = ?, status = ?, reference = ?, "

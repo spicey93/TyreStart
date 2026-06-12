@@ -5,6 +5,7 @@ from tkinter import ttk
 from ui import dialogs as messagebox
 
 from core import database
+from core import daterange
 from core import products as product_db
 from core import services as service_db
 from core import customers as customer_db
@@ -74,7 +75,7 @@ class SalesMixin:
                 tree.insert(
                     "", "end", iid=str(r["id"]),
                     values=(r["reference"] or "", r["customer_name"], r["status"],
-                            r["date"] or "", f"{r['total']:,.2f}"),
+                            daterange.format_stored(r["date"]), f"{r['total']:,.2f}"),
                 )
             status_label.config(text=f"{len(rows)} sale(s)." if rows else "No sales found.")
 
@@ -374,7 +375,7 @@ class SalesMixin:
             set_customer(sale["customer_id"], sale["customer_name"])
             status_var.set(sale["status"])
             reference_var.set(sale["reference"] or "(auto-generated)")
-            date_var.set(sale["date"] or "")
+            date_var.set(daterange.format_stored(sale["date"]))
             for it in sale_db.get_sale_items(sale["id"]):
                 lines.append({
                     "item_type": it["item_type"], "product_id": it["product_id"],

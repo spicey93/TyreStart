@@ -8,6 +8,7 @@ from core import suppliers as db
 from core import purchases as purchase_db
 from core import payments as payment_db
 from core import nominals
+from core import daterange
 
 from ui.common import make_sortable
 
@@ -53,7 +54,7 @@ class PaymentsMixin:
             tree.insert(
                 "", "end", iid=str(r["id"]),
                 values=(
-                    r["date"] or "", f"{r['account_code']} - {r['account_name']}",
+                    daterange.format_stored(r["date"]), f"{r['account_code']} - {r['account_name']}",
                     r["method"] or "", f"{r['amount']:,.2f}",
                     f"{r['unallocated']:,.2f}", r["invoices"] or "",
                 ),
@@ -70,7 +71,7 @@ class PaymentsMixin:
                 return
             pid = int(selection[0])
             row = next((r for r in rows if r["id"] == pid), None)
-            label = f"{row['date'] or ''} · {row['amount']:,.2f}" if row else str(pid)
+            label = f"{daterange.format_stored(row['date'])} · {row['amount']:,.2f}" if row else str(pid)
             if messagebox.askyesno("Delete payment", f"Delete payment ({label})?"):
                 payment_db.delete_payment(pid)
                 self.show_payments(supplier_id)
@@ -277,7 +278,7 @@ class PaymentsMixin:
         for inv in invoices:
             tree.insert(
                 "", "end", iid=str(inv["id"]),
-                values=("☐", inv["reference"] or "", inv["date"] or "",
+                values=("☐", inv["reference"] or "", daterange.format_stored(inv["date"]),
                         f"{inv['total']:,.2f}", f"{inv['outstanding']:,.2f}", ""),
             )
 

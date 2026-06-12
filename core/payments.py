@@ -7,7 +7,7 @@ supplier's invoices (payment.amount = sum of its allocations). Stored in app.db.
 
 import datetime
 
-from core import money
+from core import daterange, money
 from core.database import get_connection
 
 METHODS = ("Cash", "Card", "BACS")
@@ -73,6 +73,7 @@ def create_payment(supplier_id, nominal_account_id, method, date, amount, alloca
     """
     amount_pence = money.to_pence(amount)
     amount = money.from_pence(amount_pence)
+    date = daterange.to_iso(date)
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO payments "
