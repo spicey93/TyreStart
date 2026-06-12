@@ -8,3 +8,6 @@ app.db.bak*
 
 # Bulk product-import seed data (large file) — store/back up separately
 products.csv
+
+# Supabase / database connection secrets — local only, never commit
+db_config.json

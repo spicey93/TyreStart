@@ -33,10 +33,10 @@ def create_table():
             """
             CREATE TABLE IF NOT EXISTS vat_periods (
                 id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                start  TEXT NOT NULL,            -- ISO inclusive
-                end    TEXT NOT NULL,            -- ISO inclusive
+                "start"  TEXT NOT NULL,          -- ISO inclusive
+                "end"    TEXT NOT NULL,          -- ISO inclusive ("end" is a PG keyword)
                 status TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'filed'
-                UNIQUE(start, end)
+                UNIQUE("start", "end")
             )
             """
         )
@@ -63,7 +63,7 @@ def create_period(start, end):
     """Create a VAT period (ISO start/end inclusive); returns its id."""
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO vat_periods (start, end) VALUES (?, ?)", (start, end))
+            'INSERT INTO vat_periods ("start", "end") VALUES (?, ?)', (start, end))
         return cur.lastrowid
 
 
@@ -71,7 +71,7 @@ def get_periods():
     """All VAT periods, newest first."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT id, start, end, status FROM vat_periods ORDER BY start DESC, id DESC"
+            'SELECT id, "start", "end", status FROM vat_periods ORDER BY "start" DESC, id DESC'
         ).fetchall()
 
 
@@ -79,7 +79,7 @@ def get_period(period_id):
     """A single VAT period row, or None."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT id, start, end, status FROM vat_periods WHERE id = ?", (period_id,)
+            'SELECT id, "start", "end", status FROM vat_periods WHERE id = ?', (period_id,)
         ).fetchone()
 
 
@@ -169,7 +169,7 @@ def get_return(period_id):
     """The saved return row for a period, or None."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT r.*, p.start, p.end, p.status FROM vat_returns r "
+            'SELECT r.*, p."start", p."end", p.status FROM vat_returns r '
             "JOIN vat_periods p ON p.id = r.period_id WHERE r.period_id = ?",
             (period_id,)).fetchone()
 

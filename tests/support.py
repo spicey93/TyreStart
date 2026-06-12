@@ -17,6 +17,9 @@ from core import sales, purchases, payments, receipts, services
 
 class DatabaseTestCase(unittest.TestCase):
     def setUp(self):
+        # Force SQLite so the suite never touches a configured Supabase database.
+        self._orig_override = database.USE_SQLITE_OVERRIDE
+        database.USE_SQLITE_OVERRIDE = True
         self._orig_db_path = database.DB_PATH
         fd, name = tempfile.mkstemp(suffix=".db", prefix="test_app_")
         os.close(fd)
@@ -25,6 +28,7 @@ class DatabaseTestCase(unittest.TestCase):
         database.init_db()
 
     def tearDown(self):
+        database.USE_SQLITE_OVERRIDE = self._orig_override
         database.DB_PATH = self._orig_db_path
         gc.collect()  # let lingering sqlite connections close so the file unlocks
         try:

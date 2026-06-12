@@ -126,7 +126,8 @@ class App(
                         ("Profit & Loss", self.show_profit_and_loss),
                         ("Balance Sheet", self.show_balance_sheet),
                         ("VAT Return", self.show_vat_return)],
-            "config": [("API Keys", self.show_api_keys)],
+            "config": [("API Keys", self.show_api_keys),
+                       ("Database", self.show_database_config)],
         }
 
     def _build_menu(self):

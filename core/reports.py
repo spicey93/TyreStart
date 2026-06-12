@@ -15,7 +15,10 @@ from core.database import get_connection
 # The CASE lets a NULL bound mean "open" and keeps accounts with no postings.
 _TYPE_ROWS = (
     "SELECT a.id, a.code, a.name, "
-    "COALESCE(SUM(CASE WHEN (? IS NULL OR jr.date >= ?) AND (? IS NULL OR jr.date <= ?) "
+    # CAST(? AS TEXT): a NULL bound means "open"; the cast gives Postgres a type for
+    # the parameter (an untyped NULL in `? IS NULL` is indeterminate there).
+    "COALESCE(SUM(CASE WHEN (CAST(? AS TEXT) IS NULL OR jr.date >= ?) "
+    "  AND (CAST(? AS TEXT) IS NULL OR jr.date <= ?) "
     "  THEN jl.debit_pence - jl.credit_pence ELSE 0 END), 0) AS dc "
     "FROM accounts a "
     "LEFT JOIN journal_lines jl ON jl.account_id = a.id "

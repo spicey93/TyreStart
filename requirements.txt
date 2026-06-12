@@ -1,0 +1,6 @@
+# Runtime dependencies.
+#
+# The app itself is otherwise standard-library only (Tkinter UI + sqlite3). The
+# Postgres driver is required only when using the Supabase backend (Configuration
+# → Database). Install with:  pip install -r requirements.txt
+psycopg[binary]>=3.1

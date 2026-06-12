@@ -170,10 +170,11 @@ def get_brands():
     """Return the distinct non-empty brand names, sorted case-insensitively."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT brand FROM products WHERE brand <> '' "
-            "ORDER BY brand COLLATE NOCASE"
+            "SELECT DISTINCT brand FROM products WHERE brand <> ''"
         ).fetchall()
-        return [row["brand"] for row in rows]
+        # Sort case-insensitively in Python: Postgres rejects a DISTINCT query whose
+        # ORDER BY expression (brand COLLATE NOCASE) isn't in the select list.
+        return sorted((row["brand"] for row in rows), key=str.lower)
 
 
 # Columns the New Product form offers as add-able dropdowns; whitelisted so the
@@ -190,10 +191,10 @@ def get_distinct_values(column):
     with get_connection() as conn:
         rows = conn.execute(
             f"SELECT DISTINCT {column} AS v FROM products "
-            f"WHERE {column} IS NOT NULL AND {column} <> '' "
-            f"ORDER BY {column} COLLATE NOCASE"
+            f"WHERE {column} IS NOT NULL AND {column} <> ''"
         ).fetchall()
-        return [row["v"] for row in rows]
+        # Sorted in Python (see get_brands) for DISTINCT/ORDER BY cross-dialect parity.
+        return sorted((row["v"] for row in rows), key=str.lower)
 
 
 def get_models(brand="", size_prefix=""):
@@ -209,11 +210,11 @@ def get_models(brand="", size_prefix=""):
         params.append(size_prefix + "%")
     with get_connection() as conn:
         rows = conn.execute(
-            f"SELECT DISTINCT model FROM products WHERE {' AND '.join(clauses)} "
-            "ORDER BY model COLLATE NOCASE",
+            f"SELECT DISTINCT model FROM products WHERE {' AND '.join(clauses)}",
             params,
         ).fetchall()
-        return [row["model"] for row in rows]
+        # Sorted in Python (see get_brands) for DISTINCT/ORDER BY cross-dialect parity.
+        return sorted((row["model"] for row in rows), key=str.lower)
 
 
 def create_product(description, brand="", model="", ean="", manufacturer_code="",

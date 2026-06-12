@@ -8,7 +8,7 @@ from tests.support import DatabaseTestCase
 def rule(**kw):
     """A pricing-rule dict with sensible defaults; override fields via kwargs."""
     base = dict(id=1, name="r", uplift_type="markup", uplift_percent=0.0,
-                fixed_uplift=0.0, round_up=0, cond_cost_gt=None,
+                fixed_uplift=0.0, round_up=0, cond_cost_gt=None, cond_cost_lt=None,
                 pricing_key=None, product_group=None)
     base.update(kw)
     return base
