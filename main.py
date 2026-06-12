@@ -30,10 +30,11 @@ from ui.sales import SalesMixin
 from ui.receipts import ReceiptsMixin
 from ui.accounts import ChartOfAccountsMixin
 from ui.reports import ReportsMixin
+from ui.enquiry import EnquiryMixin
 
 
 class App(
-    SuppliersMixin, ProductsMixin, PricingMixin, PurchasesMixin, AllocationMixin, PaymentsMixin, ServicesMixin, CustomersMixin, SalesMixin, ReceiptsMixin, ChartOfAccountsMixin, ReportsMixin, tk.Tk,
+    SuppliersMixin, ProductsMixin, PricingMixin, PurchasesMixin, AllocationMixin, PaymentsMixin, ServicesMixin, CustomersMixin, SalesMixin, ReceiptsMixin, ChartOfAccountsMixin, ReportsMixin, EnquiryMixin, tk.Tk,
 ):
     """Main application window with a menu bar and swappable content views."""
 
@@ -72,14 +73,13 @@ class App(
         # is open switches straight to it (no Escape needed).
         self.current_view = None
         self._section_popup = None
+        self.bind_all("<F1>", lambda e: self._open_section("enquiry"))
         self.bind_all("<F2>", lambda e: self._open_section("sales"))
         self.bind_all("<F3>", lambda e: self._open_section("products"))
-        self.bind_all("<F4>", lambda e: self._open_section("purchases"))
-        self.bind_all("<F5>", lambda e: self._open_section("services"))
-        self.bind_all("<F6>", lambda e: self._open_section("customers"))
-        self.bind_all("<F7>", lambda e: self._open_section("suppliers"))
-        self.bind_all("<F8>", lambda e: self._open_section("accounts"))
-        self.bind_all("<F9>", lambda e: self._open_section("reports"))
+        self.bind_all("<F4>", lambda e: self._open_section("customers"))
+        self.bind_all("<F5>", lambda e: self._open_section("suppliers"))
+        self.bind_all("<F6>", lambda e: self._open_section("accounts"))
+        self.bind_all("<F7>", lambda e: self._open_section("reports"))
 
         # Container that holds whichever view is currently shown.
         self.container = ttk.Frame(self, padding=20)
@@ -93,24 +93,25 @@ class App(
     # under the matching menubar button, so no per-section x-offset is needed.
     def _sections(self):
         return {
+            "enquiry": [("Enquiry", self.show_enquiry)],
             "sales": [("All Sales", self.show_sales),
                       ("New Sale", self.show_sale_form),
                       ("New Credit Note", self.show_sales_credit_note_form)],
             "products": [("All Products", self.show_products),
                          ("New Product", self.show_product_form),
+                         ("All Services", self.show_services),
+                         ("New Service", self.show_service_form),
                          ("Pricing Rules", self.show_pricing_rules)],
-            "purchases": [("All Purchases", self.show_purchases),
-                          ("New Purchase Order", self.show_purchase_order_form),
-                          ("New Purchase Invoice", self.show_purchase_invoice_form),
-                          ("New Credit Note", self.show_credit_note_form)],
-            "services": [("All Services", self.show_services),
-                         ("New Service", self.show_service_form)],
             "customers": [("All Customers", self.show_customers),
                           ("New Customer", self.show_customer_form),
                           ("New Receipt", self.show_new_receipt)],
             "suppliers": [("All Suppliers", self.show_all_suppliers),
                           ("New Supplier", self.show_create_supplier),
-                          ("New Payment", self.show_new_payment)],
+                          ("New Payment", self.show_new_payment),
+                          ("All Purchases", self.show_purchases),
+                          ("New Purchase Order", self.show_purchase_order_form),
+                          ("New Purchase Invoice", self.show_purchase_invoice_form),
+                          ("New Credit Note", self.show_credit_note_form)],
             "accounts": [("Chart of Accounts", self.show_chart_of_accounts),
                          ("New Account", self.show_account_form)],
             "reports": [("Trial Balance", self.show_trial_balance),
@@ -147,10 +148,10 @@ class App(
                 self._section_buttons[key] = item
 
         labels = {
-            "sales": "Sales [F2]", "products": "Products [F3]",
-            "purchases": "Purchases [F4]", "services": "Services [F5]",
-            "customers": "Customers [F6]", "suppliers": "Suppliers [F7]",
-            "accounts": "Accounts [F8]", "reports": "Reports [F9]",
+            "enquiry": "Enquiry [F1]", "sales": "Sales [F2]",
+            "products": "Products & Services [F3]", "customers": "Customers [F4]",
+            "suppliers": "Suppliers [F5]", "accounts": "Accounts [F6]",
+            "reports": "Reports [F7]",
         }
         for key, label in labels.items():
             add_item(label, lambda k=key: self._open_section(k), key=key)
@@ -164,6 +165,12 @@ class App(
         with no Escape needed.
         """
         items = self._sections()[key]
+        # A single-item section (e.g. Enquiry) acts as a direct action — no point
+        # showing a one-row dropdown.
+        if len(items) == 1:
+            self._close_section()
+            self._go(items[0][1])
+            return
         self._section_commands = [command for _, command in items]
 
         frame = getattr(self, "_section_popup", None)

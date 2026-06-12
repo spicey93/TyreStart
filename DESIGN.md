@@ -174,19 +174,16 @@ ttk.Button(header, text="+ New Supplier", command=self.show_create_supplier).pac
 - The status label reports the cap honestly: *"Showing first 200 of 6,160 matches —
   narrow your search to see more."* (Never silently truncate.)
 - Give the table a vertical `ttk.Scrollbar` (wrap tree + scrollbar in their own frame).
-- Records that aren't user-editable get a **read-only detail view** instead of the
-  create/edit form. **Mirror the create form's layout** — same panels, same two-column
-  field order — but render every field as a **read-only input** (`ttk.Entry`/`Combobox`
-  with `state="readonly"`), so view and create read as the same screen. Derived figures
-  that don't exist at creation time (stock, average cost, price) and import metadata go in
-  a **separate panel** below (e.g. *Stock & Pricing*). End the view with an **Edit <Thing>**
-  button (opens the create/edit form pre-filled) beside `Back to <List>`.
-  See `products.show_product_detail` / `show_product_form`.
-- **Create/edit share one method even for catalogue records** with a read-only view:
+- **Opening a list row goes straight to its edit form** (no separate read-only detail
+  page, no row-action dialog): double-click / Enter on a product or service row calls
+  `show_product_form(row)` / `show_service_form(row)`. The form pre-fills clean (setting a
+  `StringVar` doesn't mark it dirty) and, via `_register_form`, **offers to save on leave
+  only if something was edited**. One method serves create and edit:
   `show_product_form(product=None)` — `None` creates, a row edits (title swaps New/Edit,
-  fields pre-fill, save routes to `create_product`/`update_product`). Pre-filling via
-  `StringVar.set` doesn't mark the form dirty, so it opens clean. The list's row-action
-  dialog (`ask_product_action(allow_edit=True)`) offers View / Edit / Create Sale.
+  save routes to `create_product`/`update_product`); `back` is the list.
+- **Selling from the catalogue is done from Enquiry [F1]**, not the product/service lists:
+  type a stock/service code, press Enter on a result to start a sale
+  (`show_sale_form(prefill_product=…)` / `prefill_service=…`). See `ui/enquiry.py`.
 
 ## Derived data
 - Computed fields (e.g. a Stock Code parsed/assembled from other columns) are produced

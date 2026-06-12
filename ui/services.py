@@ -87,12 +87,9 @@ class ServicesMixin:
             if not selection:
                 messagebox.showinfo("No selection", "Please select a service first.")
                 return
-            service_id = int(selection[0])
-            action = self.ask_product_action("service")
-            if action == "view":
-                self.show_service_form(service_db.get_service(service_id))
-            elif action == "sale":
-                self.show_sale_form(prefill_service=service_db.get_service(service_id))
+            # Enter/double-click opens the service to view/edit (it offers to save
+            # on leave if edited). To sell a service, use Enquiry [F1].
+            self.show_service_form(service_db.get_service(int(selection[0])))
 
         def delete_selected(event=None):
             selection = tree.selection()

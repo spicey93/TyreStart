@@ -178,112 +178,15 @@ class ProductsMixin:
             if not selection:
                 messagebox.showinfo("No selection", "Please select a product first.")
                 return
-            product_id = int(selection[0])
-            action = self.ask_product_action(allow_edit=True)
-            if action == "view":
-                self.show_product_detail(product_id)
-            elif action == "edit":
-                self.show_product_form(product_db.get_product(product_id))
-            elif action == "sale":
-                self.show_sale_form(prefill_product=product_db.get_product(product_id))
+            self.show_product_form(product_db.get_product(int(selection[0])))
 
-        # Double-clicking or pressing Enter on a row asks what to do with it.
+        # Double-clicking or pressing Enter on a row opens the product to view/edit.
+        # (To sell a product, use Enquiry [F1].)
         tree.bind("<Double-1>", lambda e: activate_selected())
         tree.bind("<Return>", lambda e: activate_selected())
 
         refresh_tree()
 
-    def show_product_detail(self, product_id):
-        """Read-only detail view for a single product.
-
-        Mirrors the New Product form's layout — same two-column Product Details
-        panel — but every field is a read-only input. A second Stock & Pricing
-        panel shows the derived figures (stock, average cost, price) and the
-        import/sync metadata."""
-        self.current_view = "product_detail"
-        self._clear_container()
-
-        product = product_db.get_product(product_id)
-        if product is None:
-            messagebox.showerror("Not found", "That product no longer exists.")
-            self.show_products()
-            return
-
-        body = self._scrollable_body()
-        ttk.Label(
-            body,
-            text=product["description"] or "Product",
-            font=("Consolas", 20, "bold"),
-        ).pack(anchor="w", pady=(0, 15))
-
-        def panel(title):
-            frame = ttk.LabelFrame(body, text=title, padding=12)
-            frame.pack(anchor="w", fill="x", pady=(0, 12))
-            frame.columnconfigure(1, weight=1)
-            frame.columnconfigure(3, weight=1)
-            return frame
-
-        def label(parent, text, row, col):
-            pad = (30, 10) if col == 2 else (0, 10)
-            ttk.Label(parent, text=text + ":").grid(
-                row=row, column=col, sticky="w", pady=5, padx=pad)
-
-        def ro(parent, value, row, col, width=24, span=1):
-            var = tk.StringVar(value="" if value is None else str(value))
-            entry = ttk.Entry(parent, textvariable=var, state="readonly", width=width)
-            entry._keep_var = var  # keep a ref so the StringVar isn't GC'd (blanks the box)
-            entry.grid(row=row, column=col, columnspan=span,
-                       sticky="ew" if span > 1 else "w", pady=5)
-
-        # --- Product Details: same layout as the New Product form ------------
-        details = panel("Product Details")
-        label(details, "Description", 0, 0)
-        ro(details, product["description"], 0, 1, span=3)
-
-        label(details, "Size (W/A/R)", 1, 0)
-        size_cell = ttk.Frame(details)
-        size_cell.grid(row=1, column=1, columnspan=3, sticky="w", pady=5)
-        for part in ("width", "aspect_ratio", "rim"):
-            v = tk.StringVar(value=product[part] or "")
-            size_entry = ttk.Entry(size_cell, textvariable=v, state="readonly", width=6)
-            size_entry._keep_var = v  # keep a ref so the StringVar isn't GC'd
-            size_entry.pack(side="left", padx=(0, 6))
-
-        # Left column
-        label(details, "Brand", 2, 0);             ro(details, product["brand"], 2, 1)
-        label(details, "Model", 3, 0);             ro(details, product["model"], 3, 1)
-        label(details, "Product Type", 4, 0);      ro(details, product["product_type"], 4, 1)
-        label(details, "Vehicle Type", 5, 0);      ro(details, product["vehicle_type"], 5, 1)
-        label(details, "EAN", 6, 0);               ro(details, product["ean"], 6, 1)
-        label(details, "Manufacturer Code", 7, 0); ro(details, product["manufacturer_code"], 7, 1)
-
-        # Right column
-        label(details, "Rolling Resistance", 2, 2); ro(details, product["rolling_resistance"], 2, 3)
-        label(details, "Wet Grip", 3, 2);           ro(details, product["wet_grip"], 3, 3)
-        label(details, "Noise Class", 4, 2);        ro(details, product["noise_class"], 4, 3)
-        label(details, "Noise Performance", 5, 2);  ro(details, product["noise_performance"], 5, 3)
-        label(details, "Vehicle Class", 6, 2);      ro(details, product["vehicle_class"], 6, 3)
-        label(details, "Pricing Key", 7, 2);        ro(details, product["pricing_key"], 7, 3)
-        label(details, "Product Group", 8, 2);      ro(details, product["product_group"], 8, 3)
-
-        # --- Stock & Pricing: derived figures + import metadata --------------
-        price = pricing_db.price_for_product(product["id"])
-        stock = panel("Stock & Pricing")
-        label(stock, "Stock Code", 0, 0); ro(stock, product["stock_code"], 0, 1)
-        label(stock, "Stock", 1, 0);      ro(stock, product_db.product_stock(product["id"]), 1, 1)
-        label(stock, "Avg Cost", 2, 0);   ro(stock, f"{product_db.average_cost(product['id']):,.2f}", 2, 1)
-        label(stock, "Price", 3, 0)
-        ro(stock, f"{price:,.2f}" if price is not None else "— (no matching rule)", 3, 1)
-        label(stock, "Sync Status", 0, 2); ro(stock, product["sync_status"], 0, 3)
-        label(stock, "Created", 1, 2);     ro(stock, product["created_date"], 1, 3)
-        label(stock, "Updated", 2, 2);     ro(stock, product["updated_date"], 2, 3)
-
-        actions = ttk.Frame(body)
-        actions.pack(anchor="w", pady=(8, 0))
-        ttk.Button(actions, text="Edit Product",
-                   command=lambda: self.show_product_form(product)).pack(side="left")
-        ttk.Button(actions, text="Back to Products",
-                   command=self.show_products).pack(side="left", padx=(8, 0))
 
     # Fixed-choice dropdowns (EU tyre-label ratings + standard tyre sizes). The
     # add-able pickers (brand/model/product type/vehicle type) get their values
@@ -427,7 +330,6 @@ class ProductsMixin:
                 return product_db.update_product(product["id"], **data)
             return product_db.create_product(**data)
 
-        # Cancelling/leaving returns to the product's detail when editing, else the list.
-        back = ((lambda: self.show_product_detail(product["id"]))
-                if editing else self.show_products)
-        self._register_form(save=save, back=back)
+        # Leaving (Esc) returns to the product list; if anything was edited, the
+        # form first offers to save (handled by _register_form's dirty tracking).
+        self._register_form(save=save, back=self.show_products)
