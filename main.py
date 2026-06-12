@@ -28,10 +28,12 @@ from ui.services import ServicesMixin
 from ui.customers import CustomersMixin
 from ui.sales import SalesMixin
 from ui.receipts import ReceiptsMixin
+from ui.accounts import ChartOfAccountsMixin
+from ui.reports import ReportsMixin
 
 
 class App(
-    SuppliersMixin, ProductsMixin, PricingMixin, PurchasesMixin, AllocationMixin, PaymentsMixin, ServicesMixin, CustomersMixin, SalesMixin, ReceiptsMixin, tk.Tk,
+    SuppliersMixin, ProductsMixin, PricingMixin, PurchasesMixin, AllocationMixin, PaymentsMixin, ServicesMixin, CustomersMixin, SalesMixin, ReceiptsMixin, ChartOfAccountsMixin, ReportsMixin, tk.Tk,
 ):
     """Main application window with a menu bar and swappable content views."""
 
@@ -76,6 +78,8 @@ class App(
         self.bind_all("<F5>", lambda e: self._open_section("services"))
         self.bind_all("<F6>", lambda e: self._open_section("customers"))
         self.bind_all("<F7>", lambda e: self._open_section("suppliers"))
+        self.bind_all("<F8>", lambda e: self._open_section("accounts"))
+        self.bind_all("<F9>", lambda e: self._open_section("reports"))
 
         # Container that holds whichever view is currently shown.
         self.container = ttk.Frame(self, padding=20)
@@ -90,7 +94,8 @@ class App(
     def _sections(self):
         return {
             "sales": [("All Sales", self.show_sales),
-                      ("New Sale", self.show_sale_form)],
+                      ("New Sale", self.show_sale_form),
+                      ("New Credit Note", self.show_sales_credit_note_form)],
             "products": [("All Products", self.show_products),
                          ("New Product", self.show_product_form),
                          ("Pricing Rules", self.show_pricing_rules)],
@@ -106,6 +111,12 @@ class App(
             "suppliers": [("All Suppliers", self.show_all_suppliers),
                           ("New Supplier", self.show_create_supplier),
                           ("New Payment", self.show_new_payment)],
+            "accounts": [("Chart of Accounts", self.show_chart_of_accounts),
+                         ("New Account", self.show_account_form)],
+            "reports": [("Trial Balance", self.show_trial_balance),
+                        ("Profit & Loss", self.show_profit_and_loss),
+                        ("Balance Sheet", self.show_balance_sheet),
+                        ("VAT Return", self.show_vat_return)],
         }
 
     def _build_menu(self):
@@ -139,6 +150,7 @@ class App(
             "sales": "Sales [F2]", "products": "Products [F3]",
             "purchases": "Purchases [F4]", "services": "Services [F5]",
             "customers": "Customers [F6]", "suppliers": "Suppliers [F7]",
+            "accounts": "Accounts [F8]", "reports": "Reports [F9]",
         }
         for key, label in labels.items():
             add_item(label, lambda k=key: self._open_section(k), key=key)

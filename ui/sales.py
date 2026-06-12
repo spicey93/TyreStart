@@ -121,22 +121,30 @@ class SalesMixin:
 
         refresh()
 
-    def show_sale_form(self, sale=None, prefill_product=None, prefill_service=None):
+    def show_sales_credit_note_form(self):
+        """Start a new sales credit note (customer return/adjustment)."""
+        self.show_sale_form(default_status="Credit Note")
+
+    def show_sale_form(self, sale=None, prefill_product=None, prefill_service=None,
+                       default_status="Quote"):
         """Create/edit a sale with product and service line items.
         `prefill_product` (a product row) / `prefill_service` (a service row) starts
         a new sale with that item already added — used when creating a sale straight
-        from the product or service list."""
+        from the product or service list. `default_status` sets the status of a new
+        sale (e.g. 'Credit Note')."""
         self.current_view = "sale_form"
         self._clear_container()
         editing = sale is not None
+        credit_note = (default_status == "Credit Note") and not editing
 
         ttk.Label(
             self.container,
-            text="Edit Sale" if editing else "New Sale",
+            text=("New Credit Note" if credit_note else
+                  "Edit Sale" if editing else "New Sale"),
             font=("Consolas", 20, "bold"),
         ).pack(anchor="w", pady=(0, 12))
 
-        status_var = tk.StringVar(value="Quote")
+        status_var = tk.StringVar(value=default_status)
         reference_var = tk.StringVar(value="(auto-generated)")
         date_var = tk.StringVar(value=datetime.date.today().strftime("%d/%m/%y"))
 

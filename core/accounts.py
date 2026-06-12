@@ -88,6 +88,36 @@ def create_table():
             )
 
 
+class DuplicateCodeError(Exception):
+    """Raised when an account code collides with an existing one."""
+
+
+def create_account(code, name, account_type):
+    """Add a user account (no system tag). Returns its id.
+
+    Raises ValueError for an unknown type and DuplicateCodeError for a clash.
+    """
+    if account_type not in ACCOUNT_TYPES:
+        raise ValueError(f"Unknown account type {account_type!r}")
+    import sqlite3
+    with get_connection() as conn:
+        try:
+            cur = conn.execute(
+                "INSERT INTO accounts (code, name, account_type, normal_side, is_bank) "
+                "VALUES (?, ?, ?, ?, 0)",
+                (code, name, account_type, normal_side(account_type)),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateCodeError(code) from exc
+        return cur.lastrowid
+
+
+def update_account(account_id, name):
+    """Rename an account (its code/type are fixed once created)."""
+    with get_connection() as conn:
+        conn.execute("UPDATE accounts SET name = ? WHERE id = ?", (name, account_id))
+
+
 def get_all(active_only=True):
     """All accounts ordered by code (active only by default)."""
     where = "WHERE active = 1" if active_only else ""
