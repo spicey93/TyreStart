@@ -106,14 +106,17 @@ def get_receipts(customer_id):
 
 
 def customer_balance(customer_id):
-    """Customer balance (pounds) = sum of owed (Order/Invoice) gross - receipts."""
+    """Customer balance (pounds) = owed sales (Order/Invoice) minus Credit Notes,
+    minus receipts. Credit Notes reduce what the customer owes."""
     with get_connection() as conn:
         sold = conn.execute(
-            "SELECT COALESCE(SUM(si.quantity * si.unit_price_pence + "
+            "SELECT COALESCE(SUM("
+            "(CASE sa.status WHEN 'Credit Note' THEN -1 ELSE 1 END) * "
+            "(si.quantity * si.unit_price_pence + "
             "CAST(ROUND(si.quantity * si.unit_price_pence * "
-            "COALESCE(si.vat_rate, 20) / 100.0, 0) AS INTEGER)), 0) "
+            "COALESCE(si.vat_rate, 20) / 100.0, 0) AS INTEGER))), 0) "
             "FROM sale_items si JOIN sales sa ON sa.id = si.sale_id "
-            "WHERE sa.customer_id = ? AND sa.status IN ('Order', 'Invoice')",
+            "WHERE sa.customer_id = ? AND sa.status IN ('Order', 'Invoice', 'Credit Note')",
             (customer_id,),
         ).fetchone()[0]
         received = conn.execute(

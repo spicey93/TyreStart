@@ -273,15 +273,18 @@ def update_product(product_id, description, brand="", model="", ean="",
 
 
 # Current stock = invoiced purchases (minus credit-noted returns) - sold quantities
-# (sale Orders and Invoices). Purchase Orders and sale Quotes don't count.
+# (sale Orders and Invoices), plus sales Credit Notes (goods returned by customers).
+# Purchase Orders and sale Quotes don't count.
 STOCK_EXPR = (
     "(COALESCE((SELECT SUM(CASE pu.status WHEN 'Invoice' THEN pi.quantity "
     "WHEN 'Credit Note' THEN -pi.quantity ELSE 0 END) FROM purchase_items pi "
     "JOIN purchases pu ON pu.id = pi.purchase_id "
     "WHERE pi.product_id = products.id), 0) "
-    "- COALESCE((SELECT SUM(si.quantity) FROM sale_items si "
+    "- COALESCE((SELECT SUM(CASE sa.status WHEN 'Credit Note' THEN -si.quantity "
+    "ELSE si.quantity END) FROM sale_items si "
     "JOIN sales sa ON sa.id = si.sale_id "
-    "WHERE si.product_id = products.id AND sa.status IN ('Order', 'Invoice')), 0))"
+    "WHERE si.product_id = products.id "
+    "AND sa.status IN ('Order', 'Invoice', 'Credit Note')), 0))"
 )
 STOCK_SUBQUERY = STOCK_EXPR + " AS stock"
 
@@ -399,7 +402,8 @@ def search_products_adv(stock_code="", brand="", model="", in_stock="", limit=20
 
 
 def product_stock(product_id):
-    """Current stock = invoiced purchases - sold (sale Orders and Invoices)."""
+    """Current stock = invoiced purchases - sold (Orders/Invoices) + sales Credit
+    Notes (goods returned by customers)."""
     with get_connection() as conn:
         purchased = conn.execute(
             "SELECT COALESCE(SUM(CASE pu.status WHEN 'Invoice' THEN pi.quantity "
@@ -409,9 +413,10 @@ def product_stock(product_id):
             (product_id,),
         ).fetchone()[0]
         sold = conn.execute(
-            "SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si "
+            "SELECT COALESCE(SUM(CASE sa.status WHEN 'Credit Note' THEN -si.quantity "
+            "ELSE si.quantity END), 0) FROM sale_items si "
             "JOIN sales sa ON sa.id = si.sale_id "
-            "WHERE si.product_id = ? AND sa.status IN ('Order', 'Invoice')",
+            "WHERE si.product_id = ? AND sa.status IN ('Order', 'Invoice', 'Credit Note')",
             (product_id,),
         ).fetchone()[0]
         return purchased - sold

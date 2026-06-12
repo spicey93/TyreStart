@@ -54,17 +54,18 @@ def remove(conn, source_type, source_id):
 
 
 def post_sale(conn, sale_id):
-    """(Re)post the journal for a sale. Posts only when its status is 'Invoice'.
+    """(Re)post the journal for a sale. Posts on 'Invoice' and 'Credit Note'.
 
-    DR Debtors (gross); CR Sales / Services Income (net by line type);
-    CR Output VAT (vat). Plus, per product line, DR COGS / CR Stock at average
-    cost. The whole thing is one balanced journal.
+    Invoice: DR Debtors (gross); CR Sales / Services Income (net by line type);
+    CR Output VAT (vat); plus per product line DR COGS / CR Stock at average cost.
+    Credit Note (customer return/adjustment) is the mirror image: it reduces
+    debtors, sales and output VAT, and returns the goods to stock.
     """
     redirect = _redirect_for(conn, "sale", sale_id)
     journal.reverse_live(conn, "sale", sale_id, redirect_date=redirect)
     sale = conn.execute(
         "SELECT status, date FROM sales WHERE id = ?", (sale_id,)).fetchone()
-    if not sale or sale["status"] != "Invoice":
+    if not sale or sale["status"] not in ("Invoice", "Credit Note"):
         return
 
     product_net = service_net = vat_total = cogs_total = 0
@@ -82,15 +83,34 @@ def post_sale(conn, sale_id):
                 cogs_total += ln["quantity"] * _avg_cost_pence(conn, ln["product_id"])
 
     gross = product_net + service_net + vat_total
-    lines = [
-        {"account_id": accounts.system_id("debtors"), "debit": gross},
-        {"account_id": accounts.system_id("sales"), "credit": product_net},
-        {"account_id": accounts.system_id("sales_services"), "credit": service_net},
-        {"account_id": accounts.system_id("vat_output"), "credit": vat_total},
-        {"account_id": accounts.system_id("cogs"), "debit": cogs_total},
-        {"account_id": accounts.system_id("stock"), "credit": cogs_total},
-    ]
-    journal.post(conn, redirect or sale["date"], "sale", sale_id, lines, memo="Sales invoice")
+    debtors = accounts.system_id("debtors")
+    sales_acc = accounts.system_id("sales")
+    services_acc = accounts.system_id("sales_services")
+    vat_out = accounts.system_id("vat_output")
+    cogs = accounts.system_id("cogs")
+    stock = accounts.system_id("stock")
+
+    if sale["status"] == "Invoice":
+        lines = [
+            {"account_id": debtors, "debit": gross},
+            {"account_id": sales_acc, "credit": product_net},
+            {"account_id": services_acc, "credit": service_net},
+            {"account_id": vat_out, "credit": vat_total},
+            {"account_id": cogs, "debit": cogs_total},
+            {"account_id": stock, "credit": cogs_total},
+        ]
+        memo = "Sales invoice"
+    else:  # Credit Note — mirror image; goods back into stock.
+        lines = [
+            {"account_id": sales_acc, "debit": product_net},
+            {"account_id": services_acc, "debit": service_net},
+            {"account_id": vat_out, "debit": vat_total},
+            {"account_id": debtors, "credit": gross},
+            {"account_id": stock, "debit": cogs_total},
+            {"account_id": cogs, "credit": cogs_total},
+        ]
+        memo = "Sales credit note"
+    journal.post(conn, redirect or sale["date"], "sale", sale_id, lines, memo=memo)
 
 
 def post_purchase(conn, purchase_id):
