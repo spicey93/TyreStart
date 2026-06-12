@@ -95,9 +95,13 @@ def get_service(service_id):
         ).fetchone()
 
 
-def list_services(text=""):
-    """Return services whose code or name matches `text`, ordered by name."""
-    like = f"%{text}%"
+def list_services(text="", prefix=False):
+    """Return services whose code or name matches `text`, ordered by name.
+
+    With `prefix=True`, match the code/name by prefix (e.g. 'fit' matches
+    'Fitting') rather than anywhere in the string — used by the Enquiry screen.
+    """
+    like = f"{text}%" if prefix else f"%{text}%"
     with get_connection() as conn:
         return conn.execute(
             "SELECT id, service_code, service_name, cost, retail_price FROM services "

@@ -311,10 +311,13 @@ def average_cost(product_id):
         return row["spend"] / row["qty"] if row["qty"] else 0.0
 
 
-def query_products(text="", brand="", in_stock="all", limit=200):
+def query_products(text="", brand="", in_stock="all", limit=200, code_prefix=False):
     """Filter products by free text, brand and/or stock status.
 
-    `text` matches the description OR the stock code (case-insensitive).
+    `text` matches the description OR the stock code (case-insensitive). With
+    `code_prefix=True` it instead matches the stock code by **prefix** only (e.g.
+    '205' matches '2055516…' but not '1857516ZE20552') — used by the Enquiry
+    screen, and able to use the stock-code index.
     `brand` (when given) restricts to that exact brand.
     `in_stock`: 'yes' = only stocked, 'no' = only out of stock, 'all' = no filter.
     Each row includes a `stock` column (invoiced quantity).
@@ -322,11 +325,15 @@ def query_products(text="", brand="", in_stock="all", limit=200):
     """
     clauses, params = [], []
     if text:
-        like = f"%{text}%"
-        clauses.append(
-            "(description LIKE ? COLLATE NOCASE OR stock_code LIKE ? COLLATE NOCASE)"
-        )
-        params += [like, like]
+        if code_prefix:
+            clauses.append("stock_code LIKE ? COLLATE NOCASE")
+            params.append(f"{text}%")
+        else:
+            like = f"%{text}%"
+            clauses.append(
+                "(description LIKE ? COLLATE NOCASE OR stock_code LIKE ? COLLATE NOCASE)"
+            )
+            params += [like, like]
     if brand:
         clauses.append("brand = ? COLLATE NOCASE")
         params.append(brand)

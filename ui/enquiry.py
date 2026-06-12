@@ -65,11 +65,9 @@ class EnquiryMixin:
         def refresh():
             text = search_term.get().strip()
             tree.delete(*tree.get_children())
-            if not text:
-                status.config(text="Enter a stock code or service code to search.")
-                return
             prods, total = product_db.query_products(
-                text=text, in_stock=instock_choice.get().lower(), limit=PRODUCT_LIMIT)
+                text=text, in_stock=instock_choice.get().lower(),
+                limit=PRODUCT_LIMIT, code_prefix=True)
             rules = pricing_db.list_rules()
             for p in prods:
                 price = pricing_db.price_from_rules(
@@ -77,7 +75,7 @@ class EnquiryMixin:
                 tree.insert("", "end", iid=f"p{p['id']}", values=(
                     "Product", p["stock_code"], p["description"], p["stock"],
                     f"{price:,.2f}" if price is not None else "—"))
-            svcs = service_db.list_services(text=text)
+            svcs = service_db.list_services(text=text, prefix=True)
             for s in svcs:
                 tree.insert("", "end", iid=f"s{s['id']}", values=(
                     "Service", s["service_code"] or "", s["service_name"], "",
