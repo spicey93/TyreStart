@@ -53,6 +53,7 @@ def init_db():
     payments.create_table()
     services.create_table()
     customers.create_table()
+    vehicles.create_table()  # before sales: a sale may carry a vehicle_id FK
     sales.create_table()
     receipts.create_table()
     pricing.create_table()
@@ -60,7 +61,6 @@ def init_db():
     taxcodes.create_table()
     vat.create_table()
     settings.create_table()
-    vehicles.create_table()
 
     # Run any pending data migrations now that every table/column exists.
     from core import migrations

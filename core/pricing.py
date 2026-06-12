@@ -37,29 +37,35 @@ def create_table():
                 fixed_uplift   REAL NOT NULL DEFAULT 0,
                 round_up       INTEGER NOT NULL DEFAULT 0,
                 cond_cost_gt   REAL,
+                cond_cost_lt   REAL,
                 pricing_key    TEXT,
                 product_group  TEXT
             )
             """
         )
+        # Add the "unit cost less than" condition to tables created before it existed.
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(pricing_rules)")}
+        if "cond_cost_lt" not in cols:
+            conn.execute("ALTER TABLE pricing_rules ADD COLUMN cond_cost_lt REAL")
 
 
 def create_rule(name, uplift_type="markup", uplift_percent=0.0, fixed_uplift=0.0,
-                round_up=False, cond_cost_gt=None, pricing_key="", product_group=""):
+                round_up=False, cond_cost_gt=None, cond_cost_lt=None,
+                pricing_key="", product_group=""):
     """Insert a pricing rule and return its new id.
 
-    `cond_cost_gt` is None when there's no cost condition; `pricing_key` and
-    `product_group` are stored as NULL when blank (meaning "no condition").
+    `cond_cost_gt` / `cond_cost_lt` are None when there's no cost bound; `pricing_key`
+    and `product_group` are stored as NULL when blank (meaning "no condition").
     """
     if uplift_type not in PERCENT_TYPES:
         uplift_type = "markup"
     with get_connection() as conn:
         cursor = conn.execute(
             "INSERT INTO pricing_rules (name, uplift_type, uplift_percent, "
-            "fixed_uplift, round_up, cond_cost_gt, pricing_key, product_group) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "fixed_uplift, round_up, cond_cost_gt, cond_cost_lt, pricing_key, product_group) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (name, uplift_type, uplift_percent, fixed_uplift, 1 if round_up else 0,
-             cond_cost_gt, pricing_key or None, product_group or None),
+             cond_cost_gt, cond_cost_lt, pricing_key or None, product_group or None),
         )
         return cursor.lastrowid
 
@@ -99,6 +105,8 @@ def apply_formula(cost, rule):
 def _matches(rule, cost, pricing_key, product_group):
     if rule["cond_cost_gt"] is not None and not (cost > rule["cond_cost_gt"]):
         return False
+    if rule["cond_cost_lt"] is not None and not (cost < rule["cond_cost_lt"]):
+        return False
     if rule["pricing_key"] and (pricing_key or "").lower() != rule["pricing_key"].lower():
         return False
     if rule["product_group"] and (product_group or "").lower() != rule["product_group"].lower():
@@ -110,6 +118,7 @@ def _specificity(rule):
     """How many conditions a rule sets — more conditions = more specific."""
     return sum((
         rule["cond_cost_gt"] is not None,
+        rule["cond_cost_lt"] is not None,
         bool(rule["pricing_key"]),
         bool(rule["product_group"]),
     ))

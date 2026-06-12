@@ -4,6 +4,8 @@ from tkinter import ttk
 from ui import dialogs as messagebox
 
 from core import pricing as pricing_db
+from core import products as product_db
+from core import lookups as lookups_db
 
 from ui.common import make_sortable
 
@@ -28,6 +30,8 @@ class PricingMixin:
         conds = []
         if r["cond_cost_gt"] is not None:
             conds.append(f"cost > {r['cond_cost_gt']:g}")
+        if r["cond_cost_lt"] is not None:
+            conds.append(f"cost < {r['cond_cost_lt']:g}")
         if r["pricing_key"]:
             conds.append(f"key = {r['pricing_key']}")
         if r["product_group"]:
@@ -107,10 +111,30 @@ class PricingMixin:
         type_var = tk.StringVar(value="markup")
         pct_var = tk.StringVar()
         fixed_var = tk.StringVar()
-        round_var = tk.BooleanVar(value=False)
+        round_var = tk.StringVar(value="No")
         cost_gt_var = tk.StringVar()
+        cost_lt_var = tk.StringVar()
         key_var = tk.StringVar()
         group_var = tk.StringVar()
+
+        def group_options():
+            """Product groups already in the catalogue, plus any user-added ones."""
+            values = set(product_db.get_distinct_values("product_group"))
+            values |= set(lookups_db.get_values("product_group"))
+            return [""] + sorted(values, key=str.lower)
+
+        def add_group():
+            """"+" handler: prompt for a new product group, persist and select it."""
+            new = messagebox.askstring("New Product Group", "Enter a new product group:")
+            if not new:
+                return
+            try:
+                lookups_db.add_value("product_group", new)
+            except lookups_db.DuplicateValueError:
+                pass  # already known — just select it
+            group_combo["values"] = group_options()
+            group_var.set(new)
+            self.mark_form_dirty()
 
         form = ttk.Frame(self.container)
         form.pack(anchor="w")
@@ -134,9 +158,12 @@ class PricingMixin:
         ttk.Label(form, text="Fixed uplift:").grid(row=3, column=0, sticky="w", pady=5, padx=(0, 10))
         ttk.Entry(form, textvariable=fixed_var, width=12).grid(row=3, column=1, sticky="w", pady=5)
 
-        ttk.Checkbutton(
-            form, text="Round up to the nearest whole number", variable=round_var
-        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=5)
+        ttk.Label(form, text="Round up to whole number:").grid(
+            row=4, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Combobox(
+            form, state="readonly", width=10, textvariable=round_var,
+            values=["No", "Yes"],
+        ).grid(row=4, column=1, sticky="w", pady=5)
 
         # --- Conditions ---
         ttk.Label(form, text="Conditions", font=("Consolas", 11, "bold")).grid(
@@ -147,10 +174,17 @@ class PricingMixin:
         )
         ttk.Label(form, text="Unit cost greater than:").grid(row=7, column=0, sticky="w", pady=5, padx=(0, 10))
         ttk.Entry(form, textvariable=cost_gt_var, width=12).grid(row=7, column=1, sticky="w", pady=5)
-        ttk.Label(form, text="Pricing key:").grid(row=8, column=0, sticky="w", pady=5, padx=(0, 10))
-        ttk.Entry(form, textvariable=key_var, width=20).grid(row=8, column=1, columnspan=2, sticky="w", pady=5)
-        ttk.Label(form, text="Product group:").grid(row=9, column=0, sticky="w", pady=5, padx=(0, 10))
-        ttk.Entry(form, textvariable=group_var, width=20).grid(row=9, column=1, columnspan=2, sticky="w", pady=5)
+        ttk.Label(form, text="Unit cost less than:").grid(row=8, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=cost_lt_var, width=12).grid(row=8, column=1, sticky="w", pady=5)
+        ttk.Label(form, text="Pricing key:").grid(row=9, column=0, sticky="w", pady=5, padx=(0, 10))
+        ttk.Entry(form, textvariable=key_var, width=20).grid(row=9, column=1, columnspan=2, sticky="w", pady=5)
+        ttk.Label(form, text="Product group:").grid(row=10, column=0, sticky="w", pady=5, padx=(0, 10))
+        group_cell = ttk.Frame(form)
+        group_cell.grid(row=10, column=1, columnspan=2, sticky="w", pady=5)
+        group_combo = ttk.Combobox(group_cell, textvariable=group_var, state="readonly",
+                                   values=group_options(), width=20)
+        group_combo.pack(side="left")
+        ttk.Button(group_cell, text="+", width=2, command=add_group).pack(side="left", padx=(4, 0))
 
         def save():
             name = name_var.get().strip()
@@ -161,14 +195,21 @@ class PricingMixin:
                 pct = float(pct_var.get()) if pct_var.get().strip() else 0.0
                 fixed = float(fixed_var.get()) if fixed_var.get().strip() else 0.0
                 cost_gt = float(cost_gt_var.get()) if cost_gt_var.get().strip() else None
+                cost_lt = float(cost_lt_var.get()) if cost_lt_var.get().strip() else None
             except ValueError:
                 messagebox.showwarning(
                     "Invalid", "Percentage, fixed uplift and unit cost must be numbers."
                 )
                 return
+            if cost_gt is not None and cost_lt is not None and cost_gt >= cost_lt:
+                messagebox.showwarning(
+                    "Invalid", "'Unit cost greater than' must be less than 'unit cost less than'."
+                )
+                return
             return pricing_db.create_rule(
                 name=name, uplift_type=type_var.get(), uplift_percent=pct,
-                fixed_uplift=fixed, round_up=round_var.get(), cond_cost_gt=cost_gt,
+                fixed_uplift=fixed, round_up=(round_var.get() == "Yes"),
+                cond_cost_gt=cost_gt, cond_cost_lt=cost_lt,
                 pricing_key=key_var.get().strip(), product_group=group_var.get().strip(),
             )
 

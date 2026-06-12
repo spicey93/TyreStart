@@ -20,12 +20,13 @@ class AllocationMixin:
         price field (used on sales to suggest the pricing-rule retail price).
         `stock_filter` swaps the Model picker for an In Stock filter (default Yes) —
         used on sales; purchases keep the Model picker. `quick_add` (sales) skips
-        the basket and quantity dialog: selecting a product adds qty 1 at its rule
-        price and closes the window immediately."""
+        the basket: selecting a product asks for quantity/price (pre-filled from the
+        rule) and then closes the window straight back to the sale."""
         win = tk.Toplevel(self)
         win.title("Add Product" if quick_add else "Product Allocation")
         win.geometry("920x460" if quick_add else "920x620")
         win.transient(self)
+        win.bind("<Escape>", lambda e: win.destroy())
 
         basket = []  # dicts: product_id, label, quantity, cost_price (unused if quick_add)
         result_map = {}  # iid -> product Row
@@ -229,22 +230,24 @@ class AllocationMixin:
             if not product:
                 return
             label = f"{product['stock_code']} — {product['description']}"
+            default_cost = price_fn(product) if price_fn else None
+            # On sales we only ask for quantity — the unit price comes from the
+            # pricing rule and the VAT rate from the default.
+            qc = self.ask_quantity_cost(win, label, price_label,
+                                        default_cost=default_cost, quantity_only=quick_add)
+            if qc is None:
+                return
+            quantity, cost, vat_rate = qc
             if quick_add:
-                # Add qty 1 at the rule price and return straight to the sale.
+                # Sales: one product per visit — add it and return to the sale.
                 on_submit([{
                     "product_id": product["id"], "label": label,
                     "stock_code": product["stock_code"],
                     "description": product["description"] or label,
-                    "quantity": 1, "cost_price": price_fn(product) if price_fn else 0.0,
-                    "vat_rate": VAT_RATE_OPTIONS[0][1],
+                    "quantity": quantity, "cost_price": cost, "vat_rate": vat_rate,
                 }])
                 win.destroy()
                 return
-            default_cost = price_fn(product) if price_fn else None
-            qc = self.ask_quantity_cost(win, label, price_label, default_cost=default_cost)
-            if qc is None:
-                return
-            quantity, cost, vat_rate = qc
             basket.append({
                 "product_id": product["id"], "label": label,
                 "stock_code": product["stock_code"],
@@ -329,12 +332,14 @@ class AllocationMixin:
         return result["value"]
 
     def ask_quantity_cost(self, parent, product_label, price_label="Unit Cost (net)",
-                          default_cost=None):
+                          default_cost=None, quantity_only=False):
         """Modal dialog returning (quantity, net_unit_price, vat_rate) or None.
         `default_cost`, if given, pre-fills the price field (e.g. a pricing-rule
-        retail price on sales) — still editable before adding."""
+        retail price on sales) — still editable before adding. `quantity_only`
+        (sales) asks for the quantity alone, taking the unit price from
+        `default_cost` and the VAT rate from the default."""
         dialog = tk.Toplevel(parent)
-        dialog.title("Quantity & Unit Cost")
+        dialog.title("Quantity" if quantity_only else "Quantity & Unit Cost")
         dialog.transient(parent)
         dialog.grab_set()
         result = {"value": None}
@@ -343,21 +348,23 @@ class AllocationMixin:
         form = ttk.Frame(dialog, padding=(10, 0))
         form.pack(anchor="w")
         qty_var = tk.StringVar()
-        cost_var = tk.StringVar(value=f"{default_cost:.2f}" if default_cost else "")
+        cost_var = tk.StringVar(
+            value=f"{default_cost:.2f}" if default_cost else ("0.00" if quantity_only else ""))
         vat_var = tk.StringVar(value=VAT_RATE_OPTIONS[0][0])
 
         ttk.Label(form, text="Quantity:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
         qty_entry = ttk.Entry(form, textvariable=qty_var, width=14)
         qty_entry.grid(row=0, column=1, pady=4)
-        ttk.Label(form, text=price_label + ":").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
-        ttk.Entry(form, textvariable=cost_var, width=14).grid(row=1, column=1, pady=4)
-        ttk.Label(form, text="VAT:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
-        vat_combo = ttk.Combobox(
-            form, state="readonly", width=14, textvariable=vat_var,
-            values=[label for label, _ in VAT_RATE_OPTIONS],
-        )
-        vat_combo.grid(row=2, column=1, pady=4)
-        vat_combo.current(0)
+        if not quantity_only:
+            ttk.Label(form, text=price_label + ":").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+            ttk.Entry(form, textvariable=cost_var, width=14).grid(row=1, column=1, pady=4)
+            ttk.Label(form, text="VAT:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+            vat_combo = ttk.Combobox(
+                form, state="readonly", width=14, textvariable=vat_var,
+                values=[label for label, _ in VAT_RATE_OPTIONS],
+            )
+            vat_combo.grid(row=2, column=1, pady=4)
+            vat_combo.current(0)
 
         gross_label = ttk.Label(form, text="")
         gross_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
@@ -375,7 +382,8 @@ class AllocationMixin:
 
         qty_var.trace_add("write", preview)
         cost_var.trace_add("write", preview)
-        vat_combo.bind("<<ComboboxSelected>>", preview)
+        if not quantity_only:
+            vat_combo.bind("<<ComboboxSelected>>", preview)
 
         def ok():
             try:
@@ -398,6 +406,7 @@ class AllocationMixin:
         ttk.Button(btns, text="Add", command=ok).pack(side="left")
         ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side="left", padx=(8, 0))
         dialog.bind("<Return>", lambda e: ok())
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
         qty_entry.focus_set()
         parent.wait_window(dialog)
         return result["value"]

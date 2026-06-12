@@ -4,6 +4,7 @@ from tkinter import ttk
 from ui import dialogs as messagebox
 
 from core import services as service_db
+from core import products as product_db
 
 from ui.common import make_sortable
 
@@ -140,6 +141,18 @@ class ServicesMixin:
                     entry.insert(0, value or "")
             entries[key] = entry
 
+        # Tagged Item Key: a product group (or blank). When a product of that group
+        # is added to a sale, this service is added automatically (e.g. casing
+        # disposal / valve replacement / wheel balancing tagged to the tyre group).
+        ttk.Label(form, text="Tagged Item Key:").grid(
+            row=len(fields), column=0, sticky="w", pady=5, padx=(0, 10))
+        tagged_var = tk.StringVar(value=(service["tagged_item_key"] or "") if editing else "")
+        tagged_combo = ttk.Combobox(
+            form, textvariable=tagged_var, width=38, state="readonly",
+            values=[""] + product_db.get_distinct_values("product_group"),
+        )
+        tagged_combo.grid(row=len(fields), column=1, sticky="w", pady=5)
+
         def save():
             data = {key: entry.get().strip() for key, entry in entries.items()}
             if not data["service_name"]:
@@ -151,14 +164,17 @@ class ServicesMixin:
             except ValueError:
                 messagebox.showwarning("Invalid", "Cost and Retail Price must be numbers.")
                 return None
+            tagged_item_key = tagged_var.get().strip()
             try:
                 if editing:
                     service_db.update_service(
-                        service["id"], data["service_code"], data["service_name"], cost, retail
+                        service["id"], data["service_code"], data["service_name"],
+                        cost, retail, tagged_item_key=tagged_item_key,
                     )
                     return service["id"]
                 return service_db.create_service(
-                    data["service_code"], data["service_name"], cost, retail
+                    data["service_code"], data["service_name"], cost, retail,
+                    tagged_item_key=tagged_item_key,
                 )
             except service_db.DuplicateCodeError:
                 messagebox.showerror(

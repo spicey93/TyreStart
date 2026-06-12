@@ -56,6 +56,14 @@ def get_by_vrm(vrm):
             "FROM vehicles WHERE vrm = ?", (normalize_vrm(vrm),)).fetchone()
 
 
+def get_by_id(vehicle_id):
+    """Return the stored vehicle row for an id, or None."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT id, vrm, make, model, build_year, raw_json, created_at "
+            "FROM vehicles WHERE id = ?", (vehicle_id,)).fetchone()
+
+
 def list_vehicles(text=""):
     """Stored vehicles whose VRM contains ``text`` (normalised), newest first."""
     like = f"%{normalize_vrm(text)}%"
@@ -87,6 +95,36 @@ def details(row):
         # Defensive: only success payloads are stored, but fall back to columns.
         return {"make": row["make"], "model": row["model"],
                 "build_year": row["build_year"], "tyres": []}
+
+
+def _split_camel(name):
+    """'BuildYear' -> 'Build Year'; leave already-spaced names alone."""
+    out = []
+    for i, ch in enumerate(name):
+        if i and ch.isupper() and not name[i - 1].isupper():
+            out.append(" ")
+        out.append(ch)
+    return "".join(out)
+
+
+def attributes(row):
+    """A comprehensive, read-only list of ``(label, value)`` pairs describing the
+    vehicle, taken from the stored raw API response's ``VehicleDetails``. Only
+    scalar (non-empty) fields are included; keys are de-camel-cased for display.
+    Falls back to the stored columns when no raw JSON is available."""
+    data = json.loads(row["raw_json"]) if row["raw_json"] else {}
+    details = (ukvehicledata._dig(data, "Response", "DataItems", "VehicleDetails")
+               or {})
+    pairs = []
+    for key, value in details.items():
+        if isinstance(value, (dict, list)) or value in (None, ""):
+            continue
+        pairs.append((_split_camel(key), str(value)))
+    if not pairs:  # no raw payload — show what the columns hold
+        pairs = [(label, row[col]) for label, col in
+                 (("Make", "make"), ("Model", "model"), ("Build Year", "build_year"))
+                 if row[col]]
+    return pairs
 
 
 def lookup(vrm, fetch=None):

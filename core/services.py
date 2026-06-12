@@ -26,7 +26,8 @@ def create_table():
                 cost               REAL,
                 retail_price       REAL,
                 cost_pence         INTEGER NOT NULL DEFAULT 0,
-                retail_price_pence INTEGER NOT NULL DEFAULT 0
+                retail_price_pence INTEGER NOT NULL DEFAULT 0,
+                tagged_item_key    TEXT
             )
             """
         )
@@ -38,6 +39,10 @@ def create_table():
             conn.execute(
                 "ALTER TABLE services ADD COLUMN retail_price_pence INTEGER NOT NULL DEFAULT 0"
             )
+        # `tagged_item_key` (a product group) auto-adds this service to a sale when a
+        # product of that group is sold.
+        if "tagged_item_key" not in cols:
+            conn.execute("ALTER TABLE services ADD COLUMN tagged_item_key TEXT")
         # Blank codes are stored as NULL so multiple uncoded services don't clash
         # (SQLite treats NULLs as distinct in a unique index).
         conn.execute("UPDATE services SET service_code = NULL WHERE service_code = ''")
@@ -47,9 +52,11 @@ def create_table():
         )
 
 
-def create_service(service_code, service_name, cost, retail_price):
+def create_service(service_code, service_name, cost, retail_price, tagged_item_key=""):
     """Insert a service and return its new id.
 
+    `tagged_item_key` (a product group, or blank) auto-adds it to a sale when a
+    product of that group is sold.
     Raises DuplicateCodeError if the (non-blank) code already exists.
     """
     code = service_code or None
@@ -57,17 +64,20 @@ def create_service(service_code, service_name, cost, retail_price):
         try:
             cursor = conn.execute(
                 "INSERT INTO services "
-                "(service_code, service_name, cost, retail_price, cost_pence, retail_price_pence) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(service_code, service_name, cost, retail_price, cost_pence, "
+                " retail_price_pence, tagged_item_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (code, service_name, cost, retail_price,
-                 money.to_pence(cost), money.to_pence(retail_price)),
+                 money.to_pence(cost), money.to_pence(retail_price),
+                 tagged_item_key or None),
             )
         except sqlite3.IntegrityError as exc:
             raise DuplicateCodeError(service_code) from exc
         return cursor.lastrowid
 
 
-def update_service(service_id, service_code, service_name, cost, retail_price):
+def update_service(service_id, service_code, service_name, cost, retail_price,
+                   tagged_item_key=""):
     """Update an existing service.
 
     Raises DuplicateCodeError if the new code collides with another service.
@@ -77,9 +87,11 @@ def update_service(service_id, service_code, service_name, cost, retail_price):
         try:
             conn.execute(
                 "UPDATE services SET service_code = ?, service_name = ?, cost = ?, "
-                "retail_price = ?, cost_pence = ?, retail_price_pence = ? WHERE id = ?",
+                "retail_price = ?, cost_pence = ?, retail_price_pence = ?, "
+                "tagged_item_key = ? WHERE id = ?",
                 (code, service_name, cost, retail_price,
-                 money.to_pence(cost), money.to_pence(retail_price), service_id),
+                 money.to_pence(cost), money.to_pence(retail_price),
+                 tagged_item_key or None, service_id),
             )
         except sqlite3.IntegrityError as exc:
             raise DuplicateCodeError(service_code) from exc
@@ -89,10 +101,25 @@ def get_service(service_id):
     """Return a single service row by id, or None."""
     with get_connection() as conn:
         return conn.execute(
-            "SELECT id, service_code, service_name, cost, retail_price "
+            "SELECT id, service_code, service_name, cost, retail_price, tagged_item_key "
             "FROM services WHERE id = ?",
             (service_id,),
         ).fetchone()
+
+
+def services_for_group(product_group):
+    """Services whose Tagged Item Key matches `product_group` (case-insensitive) —
+    i.e. those to auto-add when a product of that group is sold. Blank group
+    returns nothing."""
+    if not (product_group or "").strip():
+        return []
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT id, service_code, service_name, cost, retail_price "
+            "FROM services WHERE tagged_item_key = ? COLLATE NOCASE "
+            "ORDER BY service_name COLLATE NOCASE",
+            (product_group.strip(),),
+        ).fetchall()
 
 
 def list_services(text="", prefix=False):

@@ -3,11 +3,17 @@
 Look up a vehicle by registration (VRM). We check our own database first and only
 call the UK Vehicle Data API (using the key from Configuration → API Keys) for a
 VRM we don't already hold; successful lookups are saved for next time.
+
+A successful lookup shows a tabbed view: **Details** (a comprehensive read-only of
+the vehicle, including tyre fitments) and **History** (every sale linked to the
+vehicle).
 """
 import tkinter as tk
 from tkinter import ttk
 from ui import dialogs as messagebox
 
+from core import daterange
+from core import sales as sale_db
 from core import vehicles as vehicle_db
 from core import ukvehicledata
 
@@ -33,30 +39,100 @@ class VehiclesMixin:
         vrm_entry.bind("<Return>", lambda e: do_lookup())
         ttk.Button(bar, text="Look up", command=lambda: do_lookup()).grid(row=0, column=2)
 
-        detail = ttk.LabelFrame(self.container, text="Vehicle", padding=12)
-        detail.pack(fill="x", pady=(0, 10))
+        # A single summary line above the tabs, then the Details / History notebook.
         info_var = tk.StringVar(value="Enter a registration and press Look up.")
-        ttk.Label(detail, textvariable=info_var, font=("Consolas", 14, "bold")).pack(anchor="w")
+        ttk.Label(self.container, textvariable=info_var,
+                  font=("Consolas", 14, "bold")).pack(anchor="w", pady=(0, 2))
         source_var = tk.StringVar(value="")
-        ttk.Label(detail, textvariable=source_var, font=("Consolas", 9)).pack(anchor="w")
+        ttk.Label(self.container, textvariable=source_var,
+                  font=("Consolas", 9)).pack(anchor="w", pady=(0, 8))
 
-        ttk.Label(self.container, text="Tyre fitments",
-                  font=("Consolas", 12, "bold")).pack(anchor="w", pady=(4, 4))
-        columns = ("front", "rear", "load", "speed", "front_psi", "rear_psi", "rim")
-        headings = ("Front Size", "Rear Size", "Load", "Speed",
-                    "Front PSI", "Rear PSI", "Rim")
-        widths = (120, 120, 60, 60, 90, 90, 100)
-        table_frame = ttk.Frame(self.container)
-        table_frame.pack(fill="both", expand=True)
-        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
-        sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        tree.pack(side="left", fill="both", expand=True)
-        for col, heading, width in zip(columns, headings, widths):
-            tree.heading(col, text=heading)
-            tree.column(col, width=width, anchor="w" if col in ("front", "rear", "rim") else "e")
-        make_sortable(tree)
+        notebook = ttk.Notebook(self.container)
+        notebook.pack(fill="both", expand=True)
+        details_tab = ttk.Frame(notebook, padding=12)
+        history_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(details_tab, text="Details")
+        notebook.add(history_tab, text="History")
+
+        def render_details(row, result):
+            for child in details_tab.winfo_children():
+                child.destroy()
+
+            # Comprehensive, read-only attribute grid from the stored API response.
+            attrs = vehicle_db.attributes(row)
+            grid = ttk.Frame(details_tab)
+            grid.pack(anchor="w", fill="x")
+            if attrs:
+                half = (len(attrs) + 1) // 2  # two columns of label/value pairs
+                for i, (label, value) in enumerate(attrs):
+                    col = 0 if i < half else 2
+                    r = i if i < half else i - half
+                    ttk.Label(grid, text=f"{label}:").grid(
+                        row=r, column=col, sticky="w", padx=(0, 10), pady=3)
+                    ttk.Label(grid, text=str(value), font=("Consolas", 10, "bold")).grid(
+                        row=r, column=col + 1, sticky="w", padx=(0, 30), pady=3)
+            else:
+                ttk.Label(grid, text="No further vehicle details available.").pack(anchor="w")
+
+            # Tyre fitments.
+            ttk.Label(details_tab, text="Tyre fitments",
+                      font=("Consolas", 12, "bold")).pack(anchor="w", pady=(14, 4))
+            columns = ("front", "rear", "load", "speed", "front_psi", "rear_psi", "rim")
+            headings = ("Front Size", "Rear Size", "Load", "Speed",
+                        "Front PSI", "Rear PSI", "Rim")
+            widths = (120, 120, 60, 60, 90, 90, 100)
+            tf = ttk.Frame(details_tab)
+            tf.pack(fill="both", expand=True)
+            tree = ttk.Treeview(tf, columns=columns, show="headings", height=5)
+            sb = ttk.Scrollbar(tf, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+            tree.pack(side="left", fill="both", expand=True)
+            for col, heading, width in zip(columns, headings, widths):
+                tree.heading(col, text=heading)
+                tree.column(col, width=width,
+                            anchor="w" if col in ("front", "rear", "rim") else "e")
+            make_sortable(tree)
+            tyres = result.get("tyres") or []
+            for i, t in enumerate(tyres):
+                tree.insert("", "end", iid=str(i), values=(
+                    t.get("front_size") or "", t.get("rear_size") or "",
+                    t.get("load_index") or "", t.get("speed_index") or "",
+                    t.get("front_psi") if t.get("front_psi") is not None else "",
+                    t.get("rear_psi") if t.get("rear_psi") is not None else "",
+                    t.get("rim_size") or ""))
+            status = ttk.Label(details_tab, text="")
+            status.pack(anchor="w", pady=(6, 0))
+            if not tyres:
+                status.config(text="No tyre data for this vehicle.")
+
+        def render_history(row):
+            for child in history_tab.winfo_children():
+                child.destroy()
+            rows = sale_db.list_for_vehicle(row["id"])
+
+            def cells(r):
+                return {
+                    "reference": r["reference"] or "",
+                    "customer": r["customer_name"],
+                    "status": r["status"],
+                    "date": daterange.format_stored(r["date"]),
+                    "total": f"{r['total']:,.2f}",
+                }
+
+            self._searchable_table(
+                history_tab,
+                columns=("reference", "customer", "status", "date", "total"),
+                headings=("Reference", "Customer", "Status", "Date", "Total"),
+                rows=rows, cells=cells,
+                widths=(150, 220, 90, 110, 110),
+                right_cols=("total",),
+                field_labels=[("All", None), ("Reference", "reference"),
+                              ("Customer", "customer"), ("Status", "status")],
+                empty_text="No sales linked to this vehicle yet.",
+                iid=lambda r: str(r["id"]),
+                on_open=lambda sid: self.show_sale_form(sale_db.get_sale(sid)),
+            )
 
         def show_result(result):
             make = result.get("make") or ""
@@ -68,17 +144,10 @@ class VehiclesMixin:
             info_var.set(line)
             source_var.set("From the UK Vehicle Data API."
                            if result["source"] == "api" else "From your saved vehicles.")
-            tree.delete(*tree.get_children())
-            tyres = result.get("tyres") or []
-            for i, t in enumerate(tyres):
-                tree.insert("", "end", iid=str(i), values=(
-                    t.get("front_size") or "", t.get("rear_size") or "",
-                    t.get("load_index") or "", t.get("speed_index") or "",
-                    t.get("front_psi") if t.get("front_psi") is not None else "",
-                    t.get("rear_psi") if t.get("rear_psi") is not None else "",
-                    t.get("rim_size") or ""))
-            if not tyres:
-                source_var.set(source_var.get() + "  No tyre data for this vehicle.")
+            row = vehicle_db.get_by_vrm(result["vrm"])
+            render_details(row, result)
+            render_history(row)
+            notebook.select(details_tab)
 
         def do_lookup():
             try:
@@ -99,4 +168,3 @@ class VehiclesMixin:
                 return
             vrm_var.set(result["vrm"])
             show_result(result)
-            tree.focus_set()
