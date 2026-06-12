@@ -29,13 +29,20 @@ class EnquiryMixin:
         bar.pack(fill="x", pady=(0, 10))
         bar.columnconfigure(1, weight=1)
         search_term = tk.StringVar()
+        instock_choice = tk.StringVar(value="Yes")
         ttk.Label(bar, text="Stock / service code:").grid(row=0, column=0, sticky="w")
         search_entry = ttk.Entry(bar, textvariable=search_term)
         search_entry.grid(row=0, column=1, sticky="ew", padx=(8, 10))
         search_entry.focus_set()
         search_entry.bind("<Return>", lambda e: do_search())
-        ttk.Button(bar, text="Search", command=lambda: do_search()).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(bar, text="Clear", command=lambda: clear()).grid(row=0, column=3)
+        ttk.Label(bar, text="In stock:").grid(row=0, column=2, sticky="w")
+        instock_combo = ttk.Combobox(bar, state="readonly", width=6,
+                                     textvariable=instock_choice, values=["Yes", "No", "All"])
+        instock_combo.grid(row=0, column=3, sticky="w", padx=(8, 10))
+        instock_combo.current(0)
+        instock_combo.bind("<<ComboboxSelected>>", lambda e: do_search())
+        ttk.Button(bar, text="Search", command=lambda: do_search()).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(bar, text="Clear", command=lambda: clear()).grid(row=0, column=5)
 
         columns = ("type", "code", "description", "stock", "price")
         headings = ("Type", "Code", "Description", "Stock", "Price")
@@ -61,7 +68,8 @@ class EnquiryMixin:
             if not text:
                 status.config(text="Enter a stock code or service code to search.")
                 return
-            prods, total = product_db.query_products(text=text, in_stock="all", limit=PRODUCT_LIMIT)
+            prods, total = product_db.query_products(
+                text=text, in_stock=instock_choice.get().lower(), limit=PRODUCT_LIMIT)
             rules = pricing_db.list_rules()
             for p in prods:
                 price = pricing_db.price_from_rules(
@@ -91,6 +99,8 @@ class EnquiryMixin:
 
         def clear():
             search_term.set("")
+            instock_choice.set("Yes")
+            instock_combo.current(0)
             refresh()
             search_entry.focus_set()
 
