@@ -13,6 +13,10 @@ from core import dbconfig
 # The one database file the whole app stores everything on (SQLite default).
 DB_PATH = Path(__file__).resolve().parent.parent / "app.db"
 
+# Bump whenever any create_table() schema changes, so the Postgres startup sweep
+# (see init_db) runs once more to apply it; otherwise it's skipped for speed.
+SCHEMA_BUILD = 1
+
 
 # Tests set this True to force the local SQLite backend (against a throwaway
 # DB_PATH) regardless of any configured Supabase connection — so the suite never
@@ -44,11 +48,6 @@ def get_connection():
 
 def init_db():
     """Create every table in the central database. Safe to call on each startup."""
-    # On Postgres, create the objects the translated SQL relies on (the nocase
-    # collation) before any table DDL that uses COLLATE NOCASE.
-    if backend() == "postgres":
-        from core import pgcompat
-        pgcompat.ensure_prerequisites(dbconfig.get(dbconfig.POOLER_CONNECTION_STRING))
     # Imported here (not at module top) to avoid an import cycle, since the
     # entity modules import get_connection from this module.
     from core import dbmaint
@@ -71,6 +70,21 @@ def init_db():
     from core import vehicles
 
     dbmaint.create_table()
+
+    # The full create-table/migration sweep is idempotent but chatty — ~60 network
+    # round-trips on Postgres (~3s). Once it has run for the current SCHEMA_BUILD we
+    # record a marker and skip it on later startups. Bump SCHEMA_BUILD below whenever
+    # a create_table() changes so the sweep runs once more. On SQLite the sweep is
+    # local and instant, so it always runs (the marker is Postgres-only).
+    if backend() == "postgres" and dbmaint.get_meta("pg_build") == str(SCHEMA_BUILD):
+        return
+
+    # On Postgres, create the objects the translated SQL relies on (the nocase
+    # collation) before any table DDL that uses COLLATE NOCASE.
+    if backend() == "postgres":
+        from core import pgcompat
+        pgcompat.ensure_prerequisites(dbconfig.get(dbconfig.POOLER_CONNECTION_STRING))
+
     suppliers.create_table()
     products.create_table()
     nominals.create_table()
@@ -92,3 +106,6 @@ def init_db():
     # Run any pending data migrations now that every table/column exists.
     from core import migrations
     migrations.run_pending()
+
+    if backend() == "postgres":
+        dbmaint.set_meta("pg_build", SCHEMA_BUILD)

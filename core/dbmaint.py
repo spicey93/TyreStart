@@ -42,6 +42,26 @@ def backup_db(suffix=None):
     return dest
 
 
+def get_meta(key):
+    """Return a schema_meta value by key, or None."""
+    create_table()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_meta(key, value):
+    """Upsert a schema_meta key/value."""
+    create_table()
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO schema_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
+
+
 def schema_version():
     """Return the integer schema version (0 if never set)."""
     create_table()

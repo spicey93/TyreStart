@@ -21,6 +21,8 @@ closes on ``with`` exit; and re-raises Postgres unique violations as
 """
 import re
 import sqlite3
+import threading
+import time
 
 import psycopg
 
@@ -134,46 +136,128 @@ class _Cursor:
             return c.fetchone()[0]
 
 
+# --------------------------------------------------------------- connection pool
+#
+# Opening a TLS connection to Supabase costs ~200ms (several network round-trips),
+# and the app opens one per `with get_connection()` block. A small idle pool keeps
+# connections warm so that handshake happens once, not per query. The app is
+# single-threaded (Tkinter), but the lock keeps this safe regardless. Connections
+# older than _MAX_AGE are retired so a server-side idle timeout never hands back a
+# dead socket; a stale one that slips through is transparently reconnected once.
+
+_POOL = []                 # list of (raw_conn, created_monotonic), most-recent last
+_POOL_LOCK = threading.Lock()
+_MAX_IDLE = 4              # at most this many warm connections kept
+_MAX_AGE = 120.0          # seconds before a pooled connection is recycled
+
+
+def _now():
+    return time.monotonic()
+
+
+def _new_raw(dsn):
+    return psycopg.connect(dsn, row_factory=_row_factory)
+
+
+def _checkout(dsn):
+    with _POOL_LOCK:
+        while _POOL:
+            raw, created = _POOL.pop()
+            if raw.closed or raw.broken or (_now() - created) > _MAX_AGE:
+                try:
+                    raw.close()
+                except Exception:
+                    pass
+                continue
+            return raw, created
+    return _new_raw(dsn), _now()
+
+
+def _checkin(raw, created):
+    if raw.closed or raw.broken or (_now() - created) > _MAX_AGE:
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return
+    with _POOL_LOCK:
+        if len(_POOL) < _MAX_IDLE:
+            _POOL.append((raw, created))
+            return
+    raw.close()
+
+
 class Connection:
-    """sqlite3-shaped wrapper over a psycopg connection. Use as a context manager:
-    commits on clean exit, rolls back on error, and closes either way."""
+    """sqlite3-shaped wrapper over a pooled psycopg connection. Use as a context
+    manager: commits on clean exit, rolls back on error, and returns the connection
+    to the pool (warm) either way."""
 
     def __init__(self, dsn):
-        self._raw = psycopg.connect(dsn, row_factory=_row_factory)
+        self._dsn = dsn
+        self._raw, self._created = _checkout(dsn)
+        self._used = False  # has any statement run on this connection yet?
+
+    def _run(self, method, sql, params):
+        tsql = translate(sql)
+        try:
+            cur = self._raw.cursor()
+            getattr(cur, method)(tsql, params)
+            self._used = True
+            return _Cursor(self._raw, cur)
+        except psycopg.errors.IntegrityError as exc:
+            raise sqlite3.IntegrityError(str(exc)) from exc
+        except psycopg.OperationalError:
+            # A pooled connection went stale before we ran anything — reconnect once.
+            if self._used:
+                raise
+            try:
+                self._raw.close()
+            except Exception:
+                pass
+            self._raw, self._created = _new_raw(self._dsn), _now()
+            cur = self._raw.cursor()
+            try:
+                getattr(cur, method)(tsql, params)
+            except psycopg.errors.IntegrityError as exc:
+                raise sqlite3.IntegrityError(str(exc)) from exc
+            self._used = True
+            return _Cursor(self._raw, cur)
 
     def execute(self, sql, params=()):
-        cur = self._raw.cursor()
-        try:
-            cur.execute(translate(sql), params)
-        except psycopg.errors.IntegrityError as exc:
-            raise sqlite3.IntegrityError(str(exc)) from exc
-        return _Cursor(self._raw, cur)
+        return self._run("execute", sql, params)
 
     def executemany(self, sql, seq_of_params):
-        cur = self._raw.cursor()
-        try:
-            cur.executemany(translate(sql), list(seq_of_params))
-        except psycopg.errors.IntegrityError as exc:
-            raise sqlite3.IntegrityError(str(exc)) from exc
-        return _Cursor(self._raw, cur)
+        return self._run("executemany", sql, list(seq_of_params))
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if exc_type is None:
-            self._raw.commit()
-        else:
-            self._raw.rollback()
-        self._raw.close()
+        raw, created, self._raw = self._raw, self._created, None
+        if raw is None:
+            return False
+        try:
+            if exc_type is None:
+                raw.commit()
+            else:
+                raw.rollback()
+        except Exception:
+            try:
+                raw.close()
+            except Exception:
+                pass
+            return False
+        _checkin(raw, created)
         return False
 
     def close(self):
-        self._raw.close()
+        if self._raw is not None:
+            _checkin(self._raw, self._created)
+            self._raw = None
 
 
 def connect(dsn):
-    """Open a Postgres connection behind the sqlite3-shaped wrapper."""
+    """Open (or reuse) a pooled Postgres connection behind the sqlite3 wrapper."""
     return Connection(dsn)
 
 
