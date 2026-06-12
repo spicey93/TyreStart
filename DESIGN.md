@@ -18,6 +18,12 @@ add it here.
   runs once in `App.__init__`, before any view is built. **Never hardcode hex colors per
   widget** — pull a named color from `theme` (e.g. `theme.FG`, `theme.FG_MUTED`,
   `theme.BORDER`) or use a named ttk style. Hint/secondary text uses `theme.FG_MUTED`.
+- **The whole UI renders in UPPER CASE.** `theme.force_uppercase()` (run from `apply`)
+  patches the text-display paths (ttk/tk widget `text`, Treeview values/headings, Notebook
+  tabs, Listbox items) and upper-cases text typed into entries. You don't need to upper-case
+  strings yourself — write labels normally. **Logic values are left as-is** (Combobox option
+  lists, `StringVar`s, status codes like `"Invoice"`), so comparisons keep working. A field
+  that must stay case-sensitive (e.g. an API key) sets `entry._allow_mixed_case = True`.
 
 ## App structure
 - One window: a single `App(tk.Tk)` subclass.

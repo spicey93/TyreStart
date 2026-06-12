@@ -198,3 +198,175 @@ def _hover_invert(root):
     for cls in ("TEntry", "TCombobox", "TSpinbox"):
         root.bind_class(cls, "<Enter>", enter, add="+")
         root.bind_class(cls, "<Leave>", leave, add="+")
+
+    # Render the whole UI in upper case (display + typed entry text).
+    force_uppercase(root)
+
+
+# --- Upper-case everything ---------------------------------------------------
+# The app shows only upper-case characters. Rather than upper-casing hundreds of
+# literal strings, we patch the text-*display* paths once, here, so every widget
+# created afterwards renders upper case. Logic values are deliberately NOT
+# touched: Combobox option lists and StringVars keep their real case, so code that
+# compares e.g. status == "Invoice" still works. Text typed into an Entry is
+# upper-cased (so stored data matches what's shown) except where a widget is
+# flagged ``_allow_mixed_case`` (e.g. a case-sensitive API key).
+import tkinter as tk  # noqa: E402  (kept local to this feature)
+
+_UPPERCASED = False
+
+
+def _up(value):
+    return value.upper() if isinstance(value, str) else value
+
+
+def force_uppercase(root):
+    """Patch Tk text paths so the UI renders upper case. Idempotent."""
+    global _UPPERCASED
+    if not _UPPERCASED:
+        _UPPERCASED = True
+        _patch_ttk_text()
+        _patch_classic_text()
+        _patch_treeview()
+        _patch_notebook()
+    _bind_entry_uppercase(root)
+
+
+def _patch_ttk_text():
+    orig_init = ttk.Widget.__init__
+
+    def init(self, master, widgetname, kw=None):
+        if kw and "text" in kw:
+            kw = dict(kw)
+            kw["text"] = _up(kw["text"])
+        orig_init(self, master, widgetname, kw)
+    ttk.Widget.__init__ = init
+
+    orig_cfg = ttk.Widget.configure
+
+    def configure(self, cnf=None, **kw):
+        if "text" in kw:
+            kw["text"] = _up(kw["text"])
+        if isinstance(cnf, dict) and "text" in cnf:
+            cnf = dict(cnf)
+            cnf["text"] = _up(cnf["text"])
+        return orig_cfg(self, cnf, **kw)
+    ttk.Widget.configure = configure
+    ttk.Widget.config = configure
+
+
+def _patch_classic_text():
+    for cls in (tk.Label, tk.Button):
+        orig_init = cls.__init__
+
+        def make_init(orig):
+            def init(self, master=None, cnf={}, **kw):
+                if "text" in kw:
+                    kw["text"] = _up(kw["text"])
+                if isinstance(cnf, dict) and "text" in cnf:
+                    cnf = dict(cnf)
+                    cnf["text"] = _up(cnf["text"])
+                orig(self, master, cnf, **kw)
+            return init
+        cls.__init__ = make_init(orig_init)
+
+        orig_cfg = cls.configure
+
+        def make_cfg(orig):
+            def configure(self, cnf=None, **kw):
+                if "text" in kw:
+                    kw["text"] = _up(kw["text"])
+                if isinstance(cnf, dict) and "text" in cnf:
+                    cnf = dict(cnf)
+                    cnf["text"] = _up(cnf["text"])
+                return orig(self, cnf, **kw)
+            return configure
+        cls.configure = make_cfg(orig_cfg)
+        cls.config = cls.configure
+
+    orig_lb_insert = tk.Listbox.insert
+
+    def lb_insert(self, index, *elements):
+        return orig_lb_insert(self, index, *[_up(e) for e in elements])
+    tk.Listbox.insert = lb_insert
+
+
+def _patch_treeview():
+    orig_insert = ttk.Treeview.insert
+
+    def insert(self, parent, index, iid=None, **kw):
+        if "values" in kw:
+            kw["values"] = tuple(_up(v) for v in kw["values"])
+        if "text" in kw:
+            kw["text"] = _up(kw["text"])
+        return orig_insert(self, parent, index, iid, **kw)
+    ttk.Treeview.insert = insert
+
+    orig_heading = ttk.Treeview.heading
+
+    def heading(self, column, option=None, **kw):
+        if "text" in kw:
+            kw["text"] = _up(kw["text"])
+        return orig_heading(self, column, option, **kw)
+    ttk.Treeview.heading = heading
+
+    orig_item = ttk.Treeview.item
+
+    def item(self, item_id, option=None, **kw):
+        if "values" in kw:
+            kw["values"] = tuple(_up(v) for v in kw["values"])
+        if "text" in kw:
+            kw["text"] = _up(kw["text"])
+        return orig_item(self, item_id, option, **kw)
+    ttk.Treeview.item = item
+
+    orig_set = ttk.Treeview.set
+
+    def tset(self, item_id, column=None, value=None):
+        if value is None:
+            return orig_set(self, item_id, column, value)  # query
+        return orig_set(self, item_id, column, _up(value))
+    ttk.Treeview.set = tset
+
+
+def _patch_notebook():
+    orig_add = ttk.Notebook.add
+
+    def add(self, child, **kw):
+        if "text" in kw:
+            kw["text"] = _up(kw["text"])
+        return orig_add(self, child, **kw)
+    ttk.Notebook.add = add
+
+    orig_tab = ttk.Notebook.tab
+
+    def tab(self, tab_id, option=None, **kw):
+        if "text" in kw:
+            kw["text"] = _up(kw["text"])
+        return orig_tab(self, tab_id, option, **kw)
+    ttk.Notebook.tab = tab
+
+
+def _bind_entry_uppercase(root):
+    def handler(event):
+        widget = event.widget
+        if getattr(widget, "_allow_mixed_case", False):
+            return
+        try:
+            value = widget.get()
+        except Exception:
+            return
+        upper = value.upper()
+        if value != upper:
+            # Guarded so read-only/disabled entries (which can't be edited) are
+            # simply skipped.
+            try:
+                pos = widget.index("insert")
+                widget.delete(0, "end")
+                widget.insert(0, upper)
+                widget.icursor(pos)
+            except Exception:
+                pass
+
+    for cls in ("TEntry", "Entry"):
+        root.bind_class(cls, "<KeyRelease>", handler, add="+")

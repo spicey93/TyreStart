@@ -24,6 +24,8 @@ class ConfigMixin:
             row=0, column=0, sticky="w", pady=6, padx=(0, 10))
         ukvd_var = tk.StringVar(value=settings.get(settings.UKVD_API_KEY) or "")
         ukvd_entry = ttk.Entry(form, textvariable=ukvd_var, width=52)
+        # API keys can be case-sensitive — don't force this field to upper case.
+        ukvd_entry._allow_mixed_case = True
         ukvd_entry.grid(row=0, column=1, sticky="ew", pady=6)
         ukvd_entry.focus_set()
 
